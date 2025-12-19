@@ -7,124 +7,124 @@
 ![Docker](https://img.shields.io/badge/Docker-Container-blue?logo=docker)
 ![Gemini](https://img.shields.io/badge/AI-Gemini_2.5-magenta?logo=google-gemini)
 
-**Nue (鵺)** is an automated video processing platform that transmutes raw footage into "YouTube-ready" content using AI. It combines the speed of Go, the cognitive power of Google's Gemini 2.5, and the raw performance of Rust (FFmpeg) to solve the "editing bottleneck" for creators.
+**Nue (鵺)** は、撮影したままの未編集動画を、AIの力で自動的に「YouTubeクオリティ」のコンテンツに変換・錬成する動画処理プラットフォームです。
+Go言語の高速性、Google Gemini 2.5の認知能力、そしてRust (FFmpeg) の処理能力を組み合わせることで、クリエイターを「編集作業というボトルネック」から解放します。
 
 ---
 
 ## 📖 The "Why"
-Video editing is the single biggest friction point in content creation. 
-- **The Problem**: 10 minutes of footage often requires 2 hours of cutting, captioning, and sound design.
-- **The Solution**: Nue acts as an "AI Editor" that watches your footage, understands the context (funny, serious, shocking), and autonomously applies professional editing techniques—including BGM matching, digital zooms, and vertical cropping for Shorts.
+動画制作において、編集作業は最大の障壁です。
+- **課題**: たった10分の動画を作るために、カット割り、テロップ入れ、音響調整に2時間以上かかることも珍しくありません。
+- **解決策**: Nueは、あなたの専属「AI編集者」として機能します。動画の内容（面白いシーン、真面目なシーン、衝撃的な瞬間）を理解し、BGMの選定、デジタルズームによる演出、さらにはショート動画用の縦型クロップまでを全自動で行います。
 
 ## 🚀 Key Features
 
-### 🧠 Trend-Aware Editing (Brain)
-- **Style Cloning**: analyzing trending Vlogs on YouTube/TikTok to extract pacing, filter usage, and music choices.
-- **Semantic Analysis**: Uses **Gemini 2.5 Flash** to understand "what is happening" rather than just visual changes.
-- **Smart Thumbnails**: Automatically identifies the most "clickbaity" frame and imposes catchy titles.
+### 🧠 トレンド分析 & 演出 (Brain)
+- **スタイルクローニング**: YouTubeやTikTokで流行しているVlogのスタイル（テンポ、フィルター、音楽）を分析し、学習します。
+- **セマンティック分析**: **Gemini 2.5 Flash** を使用し、単なる映像の変化だけでなく「何が起きているか」という文脈を理解して編集します。
+- **AIサムネイル**: 動画の中から最もクリック率が高そうな（Clickbaityな）瞬間を特定し、キャッチーなタイトルを入れたサムネイルを自動生成します。
 
-### 💪 High-Performance Rendering (Muscle)
-- **Rust + FFmpeg**: Built on a highly concurrent Rust architecture that constructs complex FFmpeg filter graphs.
-- **Visual Polish**: Applies **Digital Zooms** (Ken Burns effect) and **Pans** to static shots to retain viewer retention.
-- **Audio Engineering**:
-    - **Auto-Ducking**: Automatically lowers BGM volume when speech is detected.
-    - **Tsukkomi SE**: Inserts sound effects ("Vine Boom", "Laugh") at precise "punchline" moments.
-
-### 📱 Multi-Format Native
-- **Auto-Shorts**: Detects the subject's position (`focus_point`) and intelligently crops 16:9 footage into 9:16 Vertical Video for TikTok/Reels.
+### 💪 高速レンダリング (Muscle)
+- **Rust + FFmpeg**: Rustによる並行処理アーキテクチャで、複雑なFFmpegフィルタグラフを効率的に構築・実行します。
+- **ビジュアル演出**:
+    - **デジタルズーム**: 静止したショットに動きをつける "Ken Burns" エフェクトや、衝撃的な瞬間のインパクトズームを適用します。
+    - **スマートクロップ**: 被写体の位置を自動検出し、16:9の動画から9:16のショート動画を切り出します。
+- **音響エンジニアリング**:
+    - **オートダッキング**: 話し声を検知すると自動的にBGMの音量を下げ、聞き取りやすくします。
+    - **ツッコミSE**: 「ここぞ」というタイミングで適切な効果音（笑い声、衝撃音など）を挿入します。
 
 ---
 
 ## 🛠 Architecture
 
-Nue adopts a microservices architecture optimized for local execution via Docker Compose, scalable to Cloud (AWS/GCP).
+Nueはマイクロサービスアーキテクチャを採用しており、Docker Composeによるローカル実行に最適化されていますが、AWSやGCPへのデプロイも容易です。
 
 ```mermaid
 graph TD
-    U["User / Camera"] -->|"Upload .mp4"| G
+    U["ユーザー / カメラ"] -->|"動画アップロード (.mp4)"| G
 
     subgraph "Nue Platform (Docker)"
-        G["Gateway (Go)"] -->|"Save to Disk"| V[("Shared Volume")]
+        G["Gateway (Go)"] -->|"保存"| V[("共有ボリューム")]
         
-        B["Brain (Python)"] -->|"Watch New Files"| V
-        B <-->|"Video Analysis"| Gem["Google Gemini API"]
-        B -->|"Instructions JSON"| V
+        B["Brain (Python)"] -->|"新規ファイルを検知"| V
+        B <-->|"動画解析"| Gem["Google Gemini API"]
+        B -->|"編集指示書 (JSON)"| V
         
-        M["Muscle (Rust)"] -->|"Watch JSON"| V
-        M -->|"Render FFmpeg"| V
+        M["Muscle (Rust)"] -->|"指示書を検知"| V
+        M -->|"FFmpegレンダリング"| V
         
-        T["Trend Watcher"] -->|"Crawl Styles"| YT["YouTube/TikTok"]
-        T -->|"Update Style DB"| B
+        T["Trend Watcher"] -->|"流行スタイル収集"| YT["YouTube/TikTok"]
+        T -->|"スタイルDB更新"| B
     end
     
-    M -->|"Output .mp4/.jpg"| O["Final Content"]
+    M -->|"出力 (.mp4/.jpg)"| O["完成コンテンツ"]
 ```
 
 ## 💻 Tech Stack
 
 | Service | Technology | Role |
 |:---|:---|:---|
-| **Gateway** | **Go (Gin)** | High-throughput upload handler using minimal RAM. |
-| **Brain** | **Python 3.11** | AI logic hub. Handles Gemini SDK, Watchdog, and Trend Analysis. |
-| **Muscle** | **Rust** | Heavy lifting. Generates complex FFmpeg filter chains (`xfade`, `drawtext`, `sidechaincompress`). |
-| **Infra** | **Docker Compose** | Orchestrates services with shared volumes (`/data`). |
+| **Gateway** | **Go (Gin)** | 高速・省メモリなアップロード受付サーバー。 |
+| **Brain** | **Python 3.11** | AIロジックの中枢。Gemini SDK、ファイル監視、トレンド分析を担当。 |
+| **Muscle** | **Rust** | 重量級処理担当。複雑なFFmpegフィルタチェーン（`xfade`, `drawtext`, `sidechaincompress`）を生成・実行。 |
+| **Infra** | **Docker Compose** | 全サービスと共有ボリューム（`/data`）のオーケストレーション。 |
 
 ---
 
 ## ⚡ Quick Start
 
-### Prerequisites
+### 前提条件
 - Docker Desktop
 - Google Gemini API Key
 
-### Installation
+### インストール手順
 
-1. **Clone the repository**
+1. **リポジトリのクローン**
    ```bash
    git clone https://github.com/naki0227/nue.git
    cd nue
    ```
 
-2. **Configure Environment**
-   Create a `.env` file:
+2. **環境設定**
+   `.env` ファイルを作成し、APIキーを設定します:
    ```bash
    GEMINI_API_KEY=your_actual_api_key_here
    GEMINI_MODEL=gemini-2.5-flash
    ```
 
-3. **Launch Services**
+3. **サービスの起動**
    ```bash
    docker compose up -d --build
    ```
 
-4. **Transmute Video**
-   Drop a video file into `data/raw`, or use cURL:
+4. **動画の変換**
+   `data/raw` ディレクトリに動画ファイルを置くか、以下のコマンドでアップロードします:
    ```bash
    curl -F "file=@/path/to/my_vlog.mp4" http://localhost:8080/upload
    ```
 
-5. **Get Result**
-   Check `data/output/` for your edited video and thumbnail!
+5. **結果の確認**
+   `data/output/` ディレクトリに、編集済み動画とサムネイルが生成されます！
 
 ---
 
 ## 📈 Roadmap
 
-- [x] **Phase 1-2**: MVP Architecture & Editing (Cuts, Transitions)
-- [x] **Phase 3**: Trend Analysis Engine
-- [x] **Phase 6**: Audio Engineering (Ducking, SE)
-- [x] **Phase 7**: Visual Polish (Zoom/Pan)
-- [x] **Phase 8**: Thumbnail Generation
-- [x] **Phase 9**: CI/CD (GitHub Actions)
-- [x] **Phase 10**: Vertical Video Support (Smart Crop)
-- [ ] **Phase 11**: Cloud Deployment (AWS ECS/Lambda)
+- [x] **Phase 1-2**: MVP アーキテクチャ構築 & 基本編集（カット、トランジション）
+- [x] **Phase 3**: トレンド分析・学習エンジン
+- [x] **Phase 6**: 音響エンジニアリング（ダッキング、SE自動挿入）
+- [x] **Phase 7**: ビジュアル演出（ズーム/パン）
+- [x] **Phase 8**: サムネイル自動生成
+- [x] **Phase 9**: 自動化・品質保証 (GitHub Actions)
+- [x] **Phase 10**: 縦型動画対応 (スマートクロップ)
+- [ ] **Phase 11**: クラウドデプロイ (AWS ECS/Lambda)
 
 ---
 
 ## 🤝 Contribution
 
-Contributions are welcome! Please read `CONTRIBUTING.md` (coming soon) for details on our code of conduct, and the process for submitting pull requests.
+Issueへの報告、Pull Requestをお待ちしています。貢献に関する詳細は `CONTRIBUTING.md` (準備中) をご覧ください。
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+本プロジェクトは MIT ライセンスの下で公開されています。詳細は [LICENSE](LICENSE) をご覧ください。
