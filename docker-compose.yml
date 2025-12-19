@@ -58,3 +58,11 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     restart: "no"
+
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    environment:
+      - API_URL=http://localhost:8080
+    restart: always

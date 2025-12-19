@@ -103,6 +103,9 @@ graph TD
    curl -F "file=@/path/to/my_vlog.mp4" http://localhost:8080/upload
    ```
 
+   **もしくは、Web UIを使用:**
+   ブラウザで `http://localhost:3000` にアクセスすると、モダンなWebインターフェースからドラッグ＆ドロップでアップロードできます。
+
 5. **結果の確認**
    `data/output/` ディレクトリに、編集済み動画とサムネイルが生成されます！
 
@@ -117,7 +120,9 @@ graph TD
 - [x] **Phase 8**: サムネイル自動生成
 - [x] **Phase 9**: 自動化・品質保証 (GitHub Actions)
 - [x] **Phase 10**: 縦型動画対応 (スマートクロップ)
-- [ ] **Phase 11**: クラウドデプロイ (AWS ECS/Lambda)
+- [x] **Phase 11**: テロップ装飾 (Advanced Caption Styling)
+- [x] **Phase 12**: Webインターフェース (Next.js)
+- [ ] **Phase 13**: クラウドデプロイ (AWS ECS/Lambda)
 
 ---
 
