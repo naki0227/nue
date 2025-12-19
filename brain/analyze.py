@@ -72,29 +72,82 @@ class VideoHandler(FileSystemEventHandler):
 
             logger.info("Video processed by Gemini", extra={"event": "upload_complete", "file_name": filename})
 
+            # Fetch trending style
+            style_context = ""
+            bgm_path = None
+            try:
+                style, bgm_path = fetch_latest_style()
+                if style:
+                    style_context = f"""
+                    APPLY THIS TRENDING STYLE:
+                    - Cuts/Min aim: {style.get('cuts_per_min')}
+                    - Filter: {style.get('filter_usage')}
+                    - Transition: {style.get('transition_type')}
+                    - Caption Style: {style.get('caption_style')}
+                    """
+            except Exception as e:
+                logger.error(f"Failed to fetch style: {e}")
+
             # Generate content
-            prompt = """
+            prompt = f"""
             Analyze this video. 
+            {style_context}
             Output a JSON object with the following structure:
-            {
+            {{
                 "cuts": [
-                    {
+                    {{
                         "start_time": "HH:MM:SS",
                         "end_time": "HH:MM:SS",
                         "description": "Short description",
-                        "filter": "suggested style/filter e.g. sepia, vivid, grayscale, none"
-                    }
+                        "filter": "suggested style/filter (e.g. {style.get('filter_usage', 'none')})",
+                        "transition_type": "fade/wipeleft/slideup/circleopen (default: {style.get('transition_type', 'fade')})",
+                        "focus_point": 0.5,
+                        "caption": "Short, punchy text overlay (e.g. 'WOW!', 'Nice!')",
+                        "caption_style": {{
+                            "font": "sans/serif/handwriting (default: {style.get('caption_style', 'sans')})",
+                            "color": "white/yellow/cyan",
+                            "position": "bottom/center/top",
+                            "box": true/false
+                        }}
+                    }}
                 ],
-                "editing_style": {
+                "editing_style": {{
                     "tempo": "fast/slow/dynamic",
                     "mood": "exciting/calm/etc"
-                }
-            }
-            Focus on identifying excitement points and editing style. 
-            Ensure strict JSON output.
-            """
+                }},
+                "se_events": [
+                    {{
+                        "timestamp": "HH:MM:SS",
+                        "type": "impact/whoosh/laugh/correct/incorrect (e.g. use 'impact' for Emphasis)",
+                        "tag": "funny/serious/etc"
+                    }}
+                ],
+                "visual_effects": [
+                    {{
+                        "start": "HH:MM:SS",
+                        "end": "HH:MM:SS",
+                        "type": "zoom_in/pan_left/pan_right/zoom_out",
+                        "speed": "slow/fast (default: fast for zoom_in, slow for pan)"
+                    }}
+                ],
+                "thumbnail": {{
+                    "timestamp": "HH:MM:SS (Best frame for clickbait)",
+                    "text": "Short Uppercase Title (e.g. SHOCKING!)",
+                    "color": "red/yellow/white"
+                }}
+            }}
+
             
             # New SDK usage for generation
+            Focus on identifying excitement points and editing style.
+            IMPORTANT: 
+            1. Do not caption every single segment. Be selective. Prioritize reactions.
+            2. ADD SOUND EFFECTS (SE) where appropriate.
+            3. ADD VISUAL EFFECTS (Zoom/Pan).
+            4. THUMBNAIL: Choose the most expressive/shocking frame and a short punchy title.
+            5. VERTICAL CROP: For each cut, determine the `focus_point` (0.0-1.0) where the subject is located horizontally. 0.5 is center.
+            Ensure strict JSON output.
+            """
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=[video_file, prompt],
@@ -110,6 +163,8 @@ class VideoHandler(FileSystemEventHandler):
 
             data = json.loads(text)
             data["original_filename"] = filename
+            if bgm_path:
+                data["bgm_path"] = bgm_path
             
             output_path = os.path.join(JSON_DIR, f"{filename}.json")
             with open(output_path, "w") as f:
@@ -126,6 +181,39 @@ class VideoHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error("Failed to process with Gemini", extra={"event": "gemini_error", "error": str(e)})
             raise e
+
+def fetch_latest_style():
+    db_path = "/app/data/trends.db"
+    if not os.path.exists(db_path):
+        return None, None
+        
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    try:
+        # Get latest style
+        cursor.execute("SELECT * FROM styles ORDER BY created_at DESC LIMIT 1")
+        style = cursor.fetchone()
+        
+        bgm_path = None
+        if style:
+            # Try to find matching BGM
+            bgm_mood = style['bgm_mood']
+            if bgm_mood:
+                cursor.execute("SELECT path FROM assets WHERE type='bgm' AND tags LIKE ? ORDER BY RANDOM() LIMIT 1", (f"%{bgm_mood}%",))
+                bgm = cursor.fetchone()
+                if bgm:
+                    bgm_path = bgm['path']
+        
+        return dict(style) if style else None, bgm_path
+    
+    except Exception as e:
+        logger.error(f"DB Error: {e}")
+        return None, None
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     os.makedirs(RAW_DIR, exist_ok=True)

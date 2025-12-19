@@ -49,3 +49,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  trend_watcher:
+    build:
+      context: ./trend_watcher
+    volumes:
+      - ./data:/app/data
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    restart: "no"
