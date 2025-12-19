@@ -41,23 +41,23 @@ Nue adopts a microservices architecture optimized for local execution via Docker
 
 ```mermaid
 graph TD
-    User[User / Camera] -->|Upload .mp4| Gateway
-    
+    U["User / Camera"] -->|"Upload .mp4"| G
+
     subgraph "Nue Platform (Docker)"
-        Gateway[Gateway (Go)] -->|Save to Disk| Volume[(Shared Volume)]
+        G["Gateway (Go)"] -->|"Save to Disk"| V[("Shared Volume")]
         
-        Brain[Brain (Python)] -->|Watch New Files| Volume
-        Brain <-->|Video Analysis| Gemini[Google Gemini API]
-        Brain -->|Instructions JSON| Volume
+        B["Brain (Python)"] -->|"Watch New Files"| V
+        B <-->|"Video Analysis"| Gem["Google Gemini API"]
+        B -->|"Instructions JSON"| V
         
-        Muscle[Muscle (Rust)] -->|Watch JSON| Volume
-        Muscle -->|Render FFmpeg| Volume
+        M["Muscle (Rust)"] -->|"Watch JSON"| V
+        M -->|"Render FFmpeg"| V
         
-        Trend[Trend Watcher] -->|Crawl Styles| YouTube[YouTube/TikTok]
-        Trend -->|Update Style DB| Brain
+        T["Trend Watcher"] -->|"Crawl Styles"| YT["YouTube/TikTok"]
+        T -->|"Update Style DB"| B
     end
     
-    Muscle -->|Output .mp4/.jpg| Output[Final Content]
+    M -->|"Output .mp4/.jpg"| O["Final Content"]
 ```
 
 ## 💻 Tech Stack
