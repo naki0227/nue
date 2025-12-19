@@ -40,7 +40,8 @@ struct CaptionStyle {
     color: Option<String>,
     position: Option<String>,
     #[serde(rename = "box")]
-    start_box: Option<bool>, 
+    start_box: Option<bool>,
+    background_asset: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,7 +337,7 @@ fn process_instruction(analysis: Analysis) -> Result<()> {
                                 visual_effect_str = ",crop=iw/1.25:ih/1.25:(iw-out_w)/2:(ih-out_h)/2,scale=1080:1920".to_string();
                             },
                              "zoom_out" => {
-                                visual_effect_str = ",crop=iw/1.1:ih/1.1:(iw-out_w)/2:(ih-out_h)/2,scale=1080:1920".to_string();
+                                visual_effect_str = ",crop=iw/1.1:ih/1.1:(iw-out_h)/2:(ih-out_h)/2,scale=1080:1920".to_string();
                             },
                             _ => {}
                         }
@@ -351,10 +352,36 @@ fn process_instruction(analysis: Analysis) -> Result<()> {
                 let valid_text = cap.replace("'", "").replace(":", "\\:");
                 let (font, color, box_conf, y) = get_drawtext_config(&cut.caption_style);
                 
+                let mut bg_filter = String::new();
+                
+                // BACKGROUND STRATEGY (Phase 11): Use `drawbox` for simplified shapes
+                if let Some(style) = &cut.caption_style {
+                     if let Some(bg_asset) = &style.background_asset {
+                        // Simple logic: if bg_asset is "simple_box" or "news_ticker", draw a box.
+                        // We can't easily overlay external images in this linear chain without complex refactoring.
+                        // So we use `drawbox` as a robust alternative.
+                        if bg_asset.contains("box") || bg_asset.contains("ticker") {
+                            // Draw a semi-transparent box behind text area
+                            // y = y position of text. height = 120 (approx font size 80 + padding)
+                            // width = video width (1080)
+                            // color = black@0.6 or blue@0.8
+                            let box_color = if bg_asset.contains("ticker") { "blue@0.8" } else { "black@0.6" };
+                            let box_y = if y.contains("h*") { 
+                                // Parse approximation? Hard to parse calc string.
+                                // Fallback: hardcode based on known positions
+                                if y.contains("0.1") { "h*0.1-20" } else { "h*0.85-20" }
+                            } else {
+                                "h-140"
+                            };
+                            
+                            bg_filter = format!(",drawbox=x=0:y={}:w=iw:h=160:color={}:t=fill", box_y, box_color);
+                        }
+                     }
+                }
+
                 // Adjust font size for vertical (needs to be readable on mobile) -> 80
-                // Adjust width limit
-                format!(",drawtext=text='{}':fontfile={}:fontsize=80:fontcolor={}:x=(w-text_w)/2:y={}{}:borderw=4:bordercolor=black", 
-                    valid_text, font, color, y, box_conf)
+                format!("{},drawtext=text='{}':fontfile={}:fontsize=80:fontcolor={}:x=(w-text_w)/2:y={}{}:borderw=4:bordercolor=black", 
+                    bg_filter, valid_text, font, color, y, box_conf)
             } else {
                 "".to_string()
             }

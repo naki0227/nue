@@ -107,7 +107,8 @@ class VideoHandler(FileSystemEventHandler):
                             "font": "sans/serif/handwriting (default: {style.get('caption_style', 'sans')})",
                             "color": "white/yellow/cyan",
                             "position": "bottom/center/top",
-                            "box": true/false
+                            "box": true/false,
+                            "background_asset": "simple_box/news_ticker/none (choose appropriate style)"
                         }}
                     }}
                 ],
