@@ -77,7 +77,9 @@ graph TD
 - Docker Desktop
 - Google Gemini API Key
 
-### インストール手順
+### インストール手順 🛠️
+
+誰でも簡単に始められるように設計されています。
 
 1. **リポジトリのクローン**
    ```bash
@@ -86,28 +88,38 @@ graph TD
    ```
 
 2. **環境設定**
-   `.env` ファイルを作成し、APIキーを設定します:
+   `.env.example` をコピーして `.env` を作成し、Google GeminiのAPIキーを設定します。
+   [Google AI Studio](https://aistudio.google.com/app/apikey) から無料で取得可能です。
    ```bash
-   GEMINI_API_KEY=your_actual_api_key_here
-   GEMINI_MODEL=gemini-2.5-flash
+   cp .env.example .env
+   # .env ファイルを開いて GEMINI_API_KEY を書き換えてください
    ```
 
-3. **サービスの起動**
+3. **起動 (Docker Make)**
+   Docker Desktopが起動していることを確認し、以下のコマンドを実行します。
    ```bash
    docker compose up -d --build
    ```
+   *初回はイメージのビルドに数分かかります。*
 
-4. **動画の変換**
-   `data/raw` ディレクトリに動画ファイルを置くか、以下のコマンドでアップロードします:
-   ```bash
-   curl -F "file=@/path/to/my_vlog.mp4" http://localhost:8080/upload
-   ```
+4. **Web UIにアクセス**
+   ブラウザで [http://localhost:3000](http://localhost:3000) を開きます。
+   
+   <img width="600" alt="Web UI" src="https://github.com/user-attachments/assets/dummy-image-placeholder">
 
-   **もしくは、Web UIを使用:**
-   ブラウザで `http://localhost:3000` にアクセスすると、モダンなWebインターフェースからドラッグ＆ドロップでアップロードできます。
+   動画ファイルをドラッグ＆ドロップすると、全自動で編集が始まります。
+   完成した動画は `data/output/` フォルダに保存されます。
 
-5. **結果の確認**
-   `data/output/` ディレクトリに、編集済み動画とサムネイルが生成されます！
+---
+
+## ❓ Troubleshooting
+
+- **Q: アップロードが進まない**
+    - A: Dockerのディスク容量がいっぱいになっている可能性があります。 `docker system prune` を試してください。
+- **Q: "Brain" でエラーが出る**
+    - A: `.env` のAPIキーが正しいか確認してください。無料枠の制限を超えている場合もあります。
+- **Q: Web UIが表示されない**
+    - A: ポート `3000` が他のアプリで使われていないか確認してください。
 
 ---
 
@@ -122,7 +134,7 @@ graph TD
 - [x] **Phase 10**: 縦型動画対応 (スマートクロップ)
 - [x] **Phase 11**: テロップ装飾 (Advanced Caption Styling)
 - [x] **Phase 12**: Webインターフェース (Next.js)
-- [ ] **Phase 13**: クラウドデプロイ (AWS ECS/Lambda)
+- [ ] **Phase 13**: ユーザー認証 & マルチユーザー対応 (Future)
 
 ---
 
