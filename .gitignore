@@ -1,0 +1,27 @@
+# Secrets
+.env
+
+# Data directories (keep structure but ignore content)
+data/raw/*
+!data/raw/.gitkeep
+data/json/*
+!data/json/.gitkeep
+data/output/*
+!data/output/.gitkeep
+data/sample.mp4
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Go
+gateway/gateway
+gateway/tmp/
+
+# Rust
+muscle/target/
+
+# OS
+.DS_Store

@@ -1,0 +1,12 @@
+[package]
+name = "muscle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+notify = "6.1"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"

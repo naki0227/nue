@@ -1,0 +1,21 @@
+{
+  "cuts": [
+    {
+      "start_time": "00:00:00",
+      "end_time": "00:00:05",
+      "description": "Countdown over SMPTE color bars.",
+      "filter": "none"
+    },
+    {
+      "start_time": "00:00:05",
+      "end_time": "00:00:09",
+      "description": "Solid red screen.",
+      "filter": "vivid"
+    }
+  ],
+  "editing_style": {
+    "tempo": "fast",
+    "mood": "exciting"
+  },
+  "original_filename": "90bb1802-f3cd-46fb-8e00-e2484c08e8e9.mp4"
+}

@@ -1,0 +1,21 @@
+{
+  "cuts": [
+    {
+      "start_time": "00:00:00",
+      "end_time": "00:00:05",
+      "description": "Color bar test pattern with a countdown from 0 to 4, indicating a technical or system check.",
+      "filter": "none"
+    },
+    {
+      "start_time": "00:00:05",
+      "end_time": "00:00:09",
+      "description": "Solid red screen, signaling an abrupt change or end of transmission.",
+      "filter": "none"
+    }
+  ],
+  "editing_style": {
+    "tempo": "fast",
+    "mood": "technical"
+  },
+  "original_filename": "e35a8bd1-d0ff-4c26-ab4c-bee6e9a0a035.mp4"
+}
