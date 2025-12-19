@@ -6,6 +6,7 @@
 ![Go](https://img.shields.io/badge/Go-Gateway-cyan?logo=go)
 ![Docker](https://img.shields.io/badge/Docker-Container-blue?logo=docker)
 ![Gemini](https://img.shields.io/badge/AI-Gemini_2.5-magenta?logo=google-gemini)
+[![Enludus](https://img.shields.io/badge/Project-Enludus-7000FF)](https://enludus.vercel.app)
 
 **Nue (鵺)** は、撮影したままの未編集動画を、AIの力で自動的に「YouTubeクオリティ」のコンテンツに変換・錬成する動画処理プラットフォームです。
 Go言語の高速性、Google Gemini 2.5の認知能力、そしてRust (FFmpeg) の処理能力を組み合わせることで、クリエイターを「編集作業というボトルネック」から解放します。
