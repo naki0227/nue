@@ -2,3 +2,4 @@ google-genai
 watchdog
 python-dotenv
 python-json-logger
+pydub>=0.25.1

@@ -41,8 +41,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1024M # Video processing needs more
-          cpus: '1.0'
+          memory: 3072M # Increased for large video files (was 1024M)
+          cpus: '2.0' # Increased for faster processing (was 1.0)
     restart: always
     logging:
       driver: "json-file"

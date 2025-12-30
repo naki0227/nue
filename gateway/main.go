@@ -59,6 +59,9 @@ func main() {
 			return
 		}
 
+		// Get metadata if provided
+		metadata := c.PostForm("metadata")
+
 		ext := filepath.Ext(file.Filename)
 		newFilename := uuid.New().String() + ext
 		dst := filepath.Join(uploadPath, newFilename)
@@ -69,9 +72,21 @@ func main() {
 			return
 		}
 
+		// Save metadata if provided
+		if metadata != "" {
+			metadataPath := filepath.Join(uploadPath, newFilename+"_metadata.json")
+			if err := os.WriteFile(metadataPath, []byte(metadata), 0644); err != nil {
+				logger.Error("metadata_save_failed", zap.String("filename", newFilename), zap.Error(err))
+				// Don't fail the whole upload if metadata save fails
+			} else {
+				logger.Info("metadata_saved", zap.String("filename", newFilename))
+			}
+		}
+
 		logger.Info("file_received",
 			zap.String("original_name", file.Filename),
 			zap.String("stored_name", newFilename),
+			zap.Bool("has_metadata", metadata != ""),
 		)
 
 		// 202 Accepted because processing happens asynchronously by other services

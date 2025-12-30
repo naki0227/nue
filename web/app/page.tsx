@@ -1,7 +1,24 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Upload, FileVideo, CheckCircle, Loader2, Play } from "lucide-react";
+import { Upload, CheckCircle, Loader2, Play, ChevronDown, ChevronUp, Plus, X, Settings } from "lucide-react";
+
+interface ManualCut {
+  start: string;
+  end: string;
+  action: "remove" | "keep";
+}
+
+interface ManualCaption {
+  timestamp: string;
+  text: string;
+  style: string;
+}
+
+interface ManualEffect {
+  timestamp: string;
+  type: string;
+}
 
 export default function Home() {
   const [dragActive, setDragActive] = useState(false);
@@ -9,6 +26,17 @@ export default function Home() {
   const [status, setStatus] = useState<"idle" | "uploading" | "processing" | "done">("idle");
   const [progress, setProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Advanced options state
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [script, setScript] = useState("");
+  const [autoSoundEffects, setAutoSoundEffects] = useState(true);
+  const [generateBGM, setGenerateBGM] = useState(true);
+
+  // Manual instructions state
+  const [manualCuts, setManualCuts] = useState<ManualCut[]>([]);
+  const [manualCaptions, setManualCaptions] = useState<ManualCaption[]>([]);
+  const [manualEffects, setManualEffects] = useState<ManualEffect[]>([]);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -46,10 +74,25 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", file);
 
+    // Add metadata
+    const metadata = {
+      script: script || undefined,
+      manual_instructions: {
+        cuts: manualCuts.length > 0 ? manualCuts : undefined,
+        captions: manualCaptions.length > 0 ? manualCaptions : undefined,
+        effects: manualEffects.length > 0 ? manualEffects : undefined,
+      },
+      options: {
+        auto_sound_effects: autoSoundEffects,
+        generate_bgm: generateBGM,
+      },
+    };
+
+    formData.append("metadata", JSON.stringify(metadata));
+
     try {
-      // Step 1: Upload
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", "http://localhost:8080/upload"); // Direct to Gateway
+      xhr.open("POST", "http://localhost:8080/upload");
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
@@ -61,9 +104,7 @@ export default function Home() {
       xhr.onload = () => {
         if (xhr.status === 202) {
           setStatus("processing");
-          // Ideally poll for status, but for MVP we assume "processing" then "done" after a delay
-          // In real app, we'd poll an endpoint like GET /status/:id
-          setTimeout(() => setStatus("done"), 5000); // Fake processing delay for demo
+          setTimeout(() => setStatus("done"), 5000);
         } else {
           alert("Upload failed.");
           setStatus("idle");
@@ -82,6 +123,18 @@ export default function Home() {
     }
   };
 
+  const addCut = () => {
+    setManualCuts([...manualCuts, { start: "00:00:00", end: "00:00:05", action: "remove" }]);
+  };
+
+  const addCaption = () => {
+    setManualCaptions([...manualCaptions, { timestamp: "00:00:00", text: "", style: "yellow" }]);
+  };
+
+  const addEffect = () => {
+    setManualEffects([...manualEffects, { timestamp: "00:00:00", type: "zoom_in" }]);
+  };
+
   return (
     <div className="min-h-screen bg-black text-white selection:bg-purple-500/30 flex flex-col items-center justify-center p-4 relative overflow-hidden">
       {/* Dynamic Background */}
@@ -90,7 +143,7 @@ export default function Home() {
         <div className="absolute bottom-[-20%] right-[-10%] w-[60%] h-[60%] bg-blue-600 rounded-full blur-[150px] animate-pulse" style={{ animationDelay: "2s" }} />
       </div>
 
-      <div className="z-10 w-full max-w-xl">
+      <div className="z-10 w-full max-w-3xl">
         <header className="mb-12 text-center space-y-4">
           <h1 className="text-6xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-400">
             Nue.
@@ -98,6 +151,7 @@ export default function Home() {
           <p className="text-gray-400 text-lg">AI Video Alchemy Platform</p>
         </header>
 
+        {/* Upload Area */}
         <main
           className={`
             relative group border-2 border-dashed rounded-3xl p-12 transition-all duration-300 ease-out
@@ -108,7 +162,12 @@ export default function Home() {
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
-          onClick={() => status === "idle" && inputRef.current?.click()}
+          onClick={(e) => {
+            // Only trigger file input if clicking on the upload area itself, not on any child elements
+            if (e.target === e.currentTarget && status === "idle") {
+              inputRef.current?.click();
+            }
+          }}
         >
           <input
             ref={inputRef}
@@ -182,8 +241,217 @@ export default function Home() {
           )}
         </main>
 
+        {/* Advanced Options */}
+        {status === "idle" && (
+          <div className="mt-6">
+            <button
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="w-full flex items-center justify-between px-6 py-4 rounded-2xl bg-white/5 hover:bg-white/10 transition-colors border border-white/10"
+            >
+              <div className="flex items-center gap-3">
+                <Settings className="w-5 h-5 text-purple-400" />
+                <span className="font-medium">Advanced Options</span>
+              </div>
+              {showAdvanced ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            </button>
+
+            {showAdvanced && (
+              <div className="mt-4 p-6 rounded-2xl bg-white/5 border border-white/10 space-y-6">
+                {/* Script Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Script / Transcript (Optional)
+                  </label>
+                  <textarea
+                    value={script}
+                    onChange={(e) => setScript(e.target.value)}
+                    placeholder="00:00:00 - Introduction&#10;00:00:15 - Main point (emphasis HERE)&#10;00:00:30 - Conclusion"
+                    className="w-full h-32 px-4 py-3 bg-black/50 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-colors resize-none"
+                  />
+                </div>
+
+                {/* Feature Toggles */}
+                <div className="space-y-3">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoSoundEffects}
+                      onChange={(e) => setAutoSoundEffects(e.target.checked)}
+                      className="w-5 h-5 rounded bg-black/50 border-white/10 text-purple-500 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-300">Auto Sound Effects (AI-synced)</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={generateBGM}
+                      onChange={(e) => setGenerateBGM(e.target.checked)}
+                      className="w-5 h-5 rounded bg-black/50 border-white/10 text-purple-500 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-300">Generate Custom BGM (AI-powered)</span>
+                  </label>
+                </div>
+
+                {/* Manual Cuts */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-sm font-medium text-gray-300">Manual Cuts</label>
+                    <button onClick={addCut} className="px-3 py-1 bg-purple-500/20 hover:bg-purple-500/30 rounded-lg text-xs flex items-center gap-1">
+                      <Plus className="w-3 h-3" /> Add
+                    </button>
+                  </div>
+                  {manualCuts.map((cut, idx) => (
+                    <div key={idx} className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={cut.start}
+                        onChange={(e) => {
+                          const updated = [...manualCuts];
+                          updated[idx].start = e.target.value;
+                          setManualCuts(updated);
+                        }}
+                        placeholder="00:00:00"
+                        className="flex-1 px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      />
+                      <input
+                        type="text"
+                        value={cut.end}
+                        onChange={(e) => {
+                          const updated = [...manualCuts];
+                          updated[idx].end = e.target.value;
+                          setManualCuts(updated);
+                        }}
+                        placeholder="00:00:05"
+                        className="flex-1 px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      />
+                      <select
+                        value={cut.action}
+                        onChange={(e) => {
+                          const updated = [...manualCuts];
+                          updated[idx].action = e.target.value as "remove" | "keep";
+                          setManualCuts(updated);
+                        }}
+                        className="px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      >
+                        <option value="remove">Remove</option>
+                        <option value="keep">Keep</option>
+                      </select>
+                      <button
+                        onClick={() => setManualCuts(manualCuts.filter((_, i) => i !== idx))}
+                        className="px-2 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Manual Captions */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-sm font-medium text-gray-300">Manual Captions</label>
+                    <button onClick={addCaption} className="px-3 py-1 bg-purple-500/20 hover:bg-purple-500/30 rounded-lg text-xs flex items-center gap-1">
+                      <Plus className="w-3 h-3" /> Add
+                    </button>
+                  </div>
+                  {manualCaptions.map((caption, idx) => (
+                    <div key={idx} className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={caption.timestamp}
+                        onChange={(e) => {
+                          const updated = [...manualCaptions];
+                          updated[idx].timestamp = e.target.value;
+                          setManualCaptions(updated);
+                        }}
+                        placeholder="00:00:00"
+                        className="w-24 px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      />
+                      <input
+                        type="text"
+                        value={caption.text}
+                        onChange={(e) => {
+                          const updated = [...manualCaptions];
+                          updated[idx].text = e.target.value;
+                          setManualCaptions(updated);
+                        }}
+                        placeholder="Caption text"
+                        className="flex-1 px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      />
+                      <select
+                        value={caption.style}
+                        onChange={(e) => {
+                          const updated = [...manualCaptions];
+                          updated[idx].style = e.target.value;
+                          setManualCaptions(updated);
+                        }}
+                        className="px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      >
+                        <option value="yellow">Yellow</option>
+                        <option value="white">White</option>
+                        <option value="cyan">Cyan</option>
+                      </select>
+                      <button
+                        onClick={() => setManualCaptions(manualCaptions.filter((_, i) => i !== idx))}
+                        className="px-2 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Manual Effects */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <label className="text-sm font-medium text-gray-300">Manual Effects</label>
+                    <button onClick={addEffect} className="px-3 py-1 bg-purple-500/20 hover:bg-purple-500/30 rounded-lg text-xs flex items-center gap-1">
+                      <Plus className="w-3 h-3" /> Add
+                    </button>
+                  </div>
+                  {manualEffects.map((effect, idx) => (
+                    <div key={idx} className="flex gap-2 mb-2">
+                      <input
+                        type="text"
+                        value={effect.timestamp}
+                        onChange={(e) => {
+                          const updated = [...manualEffects];
+                          updated[idx].timestamp = e.target.value;
+                          setManualEffects(updated);
+                        }}
+                        placeholder="00:00:00"
+                        className="w-24 px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      />
+                      <select
+                        value={effect.type}
+                        onChange={(e) => {
+                          const updated = [...manualEffects];
+                          updated[idx].type = e.target.value;
+                          setManualEffects(updated);
+                        }}
+                        className="flex-1 px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                      >
+                        <option value="zoom_in">Zoom In</option>
+                        <option value="zoom_out">Zoom Out</option>
+                        <option value="pan_left">Pan Left</option>
+                        <option value="pan_right">Pan Right</option>
+                      </select>
+                      <button
+                        onClick={() => setManualEffects(manualEffects.filter((_, i) => i !== idx))}
+                        className="px-2 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         <footer className="mt-12 flex justify-between text-xs text-gray-600 uppercase tracking-widest font-mono">
-          <span>Nue v1.0.0</span>
+          <span>Nue v1.1.0</span>
           <span>Status: Online</span>
         </footer>
       </div>

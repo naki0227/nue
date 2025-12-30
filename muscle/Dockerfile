@@ -16,13 +16,13 @@ RUN cargo build --release
 
 FROM debian:bookworm-slim
 
-# Install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
+# Install ffmpeg and Japanese fonts
+RUN apt-get update && apt-get install -y ffmpeg fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/muscle .
 
 # Setup directories
-RUN mkdir -p /app/data/raw /app/data/json /app/data/output
+RUN mkdir -p /app/data/raw /app/data/json /app/data/output /app/data/temp
 
 CMD ["./muscle"]

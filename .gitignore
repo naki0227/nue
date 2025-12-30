@@ -8,13 +8,22 @@ data/json/*
 !data/json/.gitkeep
 data/output/*
 !data/output/.gitkeep
-data/sample.mp4
+data/temp/*
+!data/temp/.gitkeep
+data/bgm/*
+!data/bgm/.gitkeep
+# Keep data/se as they are small custom assets
+
+# Test files in root data
+data/*.mp4
+data/*.db
 
 # Python
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+*.log
 
 # Go
 gateway/gateway
@@ -23,5 +32,13 @@ gateway/tmp/
 # Rust
 muscle/target/
 
+# Web (Next.js)
+web/node_modules/
+web/.next/
+web/out/
+web/build/
+web/.docusaurus/
+
 # OS
 .DS_Store
+**/.DS_Store
