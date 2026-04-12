@@ -1,16 +1,37 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
+
+type jobStatus struct {
+	JobID            string `json:"job_id"`
+	Status           string `json:"status"`
+	OriginalFilename string `json:"original_filename"`
+	StoredFilename   string `json:"stored_filename"`
+	Message          string `json:"message"`
+	Progress         int    `json:"progress"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+func writeJobStatus(jobsPath string, status jobStatus) error {
+	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	body, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(jobsPath, status.JobID+".json"), body, 0644)
+}
 
 func main() {
 	// Initialize Zap logger for JSON output
@@ -45,11 +66,34 @@ func main() {
 		c.Next()
 	})
 
-	uploadPath := "/app/data/raw"
-	if _, err := os.Stat(uploadPath); os.IsNotExist(err) {
-		uploadPath = "../data/raw" // Fallback
-		os.MkdirAll(uploadPath, 0755)
+	dataPath := "/app/data"
+	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
+		dataPath = "../data" // Fallback for local runs from gateway/
 	}
+	uploadPath := filepath.Join(dataPath, "raw")
+	jobsPath := filepath.Join(dataPath, "jobs")
+	outputPath := filepath.Join(dataPath, "output")
+	os.MkdirAll(uploadPath, 0755)
+	os.MkdirAll(jobsPath, 0755)
+	os.MkdirAll(outputPath, 0755)
+
+	r.Static("/output", outputPath)
+
+	r.GET("/jobs/:id", func(c *gin.Context) {
+		jobID := filepath.Base(c.Param("id"))
+		if jobID == "." || jobID == string(filepath.Separator) || strings.Contains(jobID, "..") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid job id"})
+			return
+		}
+
+		body, err := os.ReadFile(filepath.Join(jobsPath, jobID+".json"))
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Job not found"})
+			return
+		}
+
+		c.Data(http.StatusOK, "application/json", body)
+	})
 
 	r.POST("/upload", func(c *gin.Context) {
 		file, err := c.FormFile("file")
@@ -63,10 +107,12 @@ func main() {
 		metadata := c.PostForm("metadata")
 
 		ext := filepath.Ext(file.Filename)
-		newFilename := uuid.New().String() + ext
+		jobID := uuid.New().String()
+		newFilename := jobID + ext
 		dst := filepath.Join(uploadPath, newFilename)
+		tmpDst := dst + ".part"
 
-		if err := c.SaveUploadedFile(file, dst); err != nil {
+		if err := c.SaveUploadedFile(file, tmpDst); err != nil {
 			logger.Error("save_failed", zap.String("filename", newFilename), zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unable to save file: %s", err.Error())})
 			return
@@ -74,6 +120,15 @@ func main() {
 
 		// Save metadata if provided
 		if metadata != "" {
+			var metadataMap map[string]any
+			if err := json.Unmarshal([]byte(metadata), &metadataMap); err == nil {
+				metadataMap["job_id"] = jobID
+				metadataMap["original_filename"] = file.Filename
+				if enrichedMetadata, err := json.Marshal(metadataMap); err == nil {
+					metadata = string(enrichedMetadata)
+				}
+			}
+
 			metadataPath := filepath.Join(uploadPath, newFilename+"_metadata.json")
 			if err := os.WriteFile(metadataPath, []byte(metadata), 0644); err != nil {
 				logger.Error("metadata_save_failed", zap.String("filename", newFilename), zap.Error(err))
@@ -83,7 +138,33 @@ func main() {
 			}
 		}
 
+		if err := writeJobStatus(jobsPath, jobStatus{
+			JobID:            jobID,
+			Status:           "uploaded",
+			OriginalFilename: file.Filename,
+			StoredFilename:   newFilename,
+			Message:          "Upload complete. Waiting for analysis.",
+			Progress:         10,
+		}); err != nil {
+			logger.Error("job_status_save_failed", zap.String("job_id", jobID), zap.Error(err))
+		}
+
+		if err := os.Rename(tmpDst, dst); err != nil {
+			logger.Error("rename_failed", zap.String("filename", newFilename), zap.Error(err))
+			_ = writeJobStatus(jobsPath, jobStatus{
+				JobID:            jobID,
+				Status:           "failed",
+				OriginalFilename: file.Filename,
+				StoredFilename:   newFilename,
+				Message:          "Upload could not be finalized.",
+				Progress:         100,
+			})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Unable to finalize file: %s", err.Error())})
+			return
+		}
+
 		logger.Info("file_received",
+			zap.String("job_id", jobID),
 			zap.String("original_name", file.Filename),
 			zap.String("stored_name", newFilename),
 			zap.Bool("has_metadata", metadata != ""),
@@ -92,6 +173,7 @@ func main() {
 		// 202 Accepted because processing happens asynchronously by other services
 		c.JSON(http.StatusAccepted, gin.H{
 			"message":  "File uploaded successfully",
+			"job_id":   jobID,
 			"filename": newFilename,
 			"status":   "processing_started",
 		})

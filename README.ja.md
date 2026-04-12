@@ -126,6 +126,8 @@ graph TD
 
 ## 📈 Roadmap
 
+> 現在は Rust CLI + Next.js Web UI への段階移行を進めています。詳細は [`docs/migration-plan.md`](docs/migration-plan.md) と [`docs/language-strategy.md`](docs/language-strategy.md) を参照してください。
+
 - [x] **Phase 1-2**: MVP アーキテクチャ構築 & 基本編集（カット、トランジション）
 - [x] **Phase 3**: トレンド分析・学習エンジン
 - [x] **Phase 6**: 音響エンジニアリング（ダッキング、SE自動挿入）
@@ -136,6 +138,12 @@ graph TD
 - [x] **Phase 11**: テロップ装飾 (Advanced Caption Styling)
 - [x] **Phase 12**: Webインターフェース (Next.js)
 - [ ] **Phase 13**: ユーザー認証 & マルチユーザー対応 (Future)
+
+## 🧭 Planning Docs
+
+- [`docs/migration-plan.md`](docs/migration-plan.md): Go/Pythonから Rust CLI + Next.js へ移行する段階計画
+- [`docs/language-strategy.md`](docs/language-strategy.md): 言語構成の判断理由
+- [`docs/roi.md`](docs/roi.md): 時間/コスト削減の仮説と成功指標
 
 ---
 

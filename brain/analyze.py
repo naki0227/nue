@@ -11,7 +11,6 @@ from watchdog.observers.polling import PollingObserver as Observer
 from watchdog.events import FileSystemEventHandler
 from pythonjsonlogger import jsonlogger
 from dotenv import load_dotenv
-from bgm_generator import generate_bgm_with_gemini
 
 # Load env
 load_dotenv()
@@ -28,12 +27,14 @@ logger.setLevel(logging.INFO)
 RAW_DIR = "/app/data/raw"
 JSON_DIR = "/app/data/json"
 BGM_DIR = "/app/data/bgm"
+JOB_DIR = "/app/data/jobs"
 API_KEY = os.environ.get("GEMINI_API_KEY")
 # User requested specific model name
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Ensure BGM directory exists
 os.makedirs(BGM_DIR, exist_ok=True) 
+os.makedirs(JOB_DIR, exist_ok=True)
 
 client = None
 if not API_KEY:
@@ -59,13 +60,15 @@ class VideoHandler(FileSystemEventHandler):
             logger.error(f"Error processing video", extra={"event": "process_error", "file_name": filename, "error": str(e)})
 
     def process_video(self, filepath, filename):
+        metadata = load_metadata(filepath)
+        job_id = get_job_id(filename, metadata)
+
         if not client:
             logger.error("Client not initialized", extra={"event": "client_error"})
+            update_job_status(job_id, "failed", "Gemini client is not configured.", 100, stored_filename=filename)
             return
 
-        # Load metadata if exists
-        metadata = load_metadata(filepath)
-        
+        update_job_status(job_id, "analyzing", "Brain is analyzing the video.", 30, stored_filename=filename)
         logger.info("Uploading to Gemini", extra={"event": "upload_start", "file_name": filename, "has_metadata": metadata is not None})
         
         try:
@@ -85,9 +88,11 @@ class VideoHandler(FileSystemEventHandler):
             # Fetch trending style
             style_context = ""
             bgm_path = None
+            style = {}
             try:
-                style, bgm_path = fetch_latest_style()
-                if style:
+                fetched_style, bgm_path = fetch_latest_style()
+                if fetched_style:
+                    style = fetched_style
                     style_context = f"""
                     APPLY THIS TRENDING STYLE:
                     - Cuts/Min aim: {style.get('cuts_per_min')}
@@ -198,8 +203,7 @@ class VideoHandler(FileSystemEventHandler):
                 data = merge_instructions(data, metadata["manual_instructions"])
                 logger.info("Merged manual instructions", extra={"event": "instructions_merged"})
             
-            # Generate BGM if requested
-            # Select professional BGM based on video mood
+            # Select professional BGM based on video mood if requested
             mood = data.get("editing_style", {}).get("mood", "").lower()
             
             # Professional BGM Library (Kevin MacLeod)
@@ -251,16 +255,20 @@ class VideoHandler(FileSystemEventHandler):
             bgm_path = os.path.join(BGM_DIR, bgm_filename)
             
             data["bgm_path"] = bgm_path
+            if not generate_bgm:
+                data["bgm_path"] = None
             logger.info(f"Selected BGM: {bgm_filename} for mood: {mood} (category: {category})", 
                        extra={"event": "bgm_selected", "mood": mood, "bgm": bgm_filename})
             
             data["original_filename"] = filename
+            data["job_id"] = job_id
             
             output_path = os.path.join(JSON_DIR, f"{filename}.json")
             with open(output_path, "w") as f:
                 json.dump(data, f, indent=2)
             
             logger.info("Analysis saved", extra={"event": "analysis_saved", "path": output_path})
+            update_job_status(job_id, "rendering", "Edit plan is ready. Muscle is rendering.", 60, stored_filename=filename)
             
             # Cleanup remote file
             try:
@@ -270,7 +278,38 @@ class VideoHandler(FileSystemEventHandler):
             
         except Exception as e:
             logger.error("Failed to process with Gemini", extra={"event": "gemini_error", "error": str(e)})
+            update_job_status(job_id, "failed", str(e), 100, stored_filename=filename)
             raise e
+
+def get_job_id(filename, metadata):
+    if metadata and metadata.get("job_id"):
+        return metadata["job_id"]
+    return Path(filename).stem
+
+def update_job_status(job_id, status, message, progress, **extra):
+    if not job_id:
+        return
+    os.makedirs(JOB_DIR, exist_ok=True)
+    path = os.path.join(JOB_DIR, f"{job_id}.json")
+    payload = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                payload = json.load(f)
+        except Exception:
+            payload = {}
+
+    payload.update({
+        "job_id": job_id,
+        "status": status,
+        "message": message,
+        "progress": progress,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
+    payload.update({k: v for k, v in extra.items() if v is not None})
+
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
 
 def fetch_latest_style():
     db_path = "/app/data/trends.db"

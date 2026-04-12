@@ -111,6 +111,8 @@ Designed for anyone to start easily.
 
 ## 📉 Roadmap
 
+> Nue is being migrated toward a Rust CLI + Next.js Web UI architecture. See [`docs/migration-plan.md`](docs/migration-plan.md) and [`docs/language-strategy.md`](docs/language-strategy.md) for the current plan.
+
 - [x] **Phase 1-2**: MVP Architecture & Basic Editing (Cut, Transition)
 - [x] **Phase 3**: Trend Analysis & Learning Engine
 - [x] **Phase 6**: Audio Engineering (Ducking, Auto SE)
@@ -121,6 +123,14 @@ Designed for anyone to start easily.
 - [x] **Phase 11**: Advanced Caption Styling
 - [x] **Phase 12**: Web Interface (Next.js)
 - [ ] **Phase 13**: User Auth & Multi-user Support (Future)
+
+---
+
+## 🧭 Planning Docs
+
+- [`docs/migration-plan.md`](docs/migration-plan.md): staged migration from Go/Python toward Rust CLI + Next.js
+- [`docs/language-strategy.md`](docs/language-strategy.md): language-boundary rationale
+- [`docs/roi.md`](docs/roi.md): time/cost-saving assumptions and success metrics
 
 ---
 
