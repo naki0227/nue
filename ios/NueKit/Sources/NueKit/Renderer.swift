@@ -137,15 +137,17 @@ public enum Renderer {
         }
     }
 
-    /// Fills `renderSize` with the (oriented) source; `focus` slides the crop
-    /// window horizontally, `zoom` scales around the frame center.
+    /// Fills `renderSize` with the (oriented) source, centering the crop on the
+    /// subject (`focus` = its horizontal center, 0...1); `zoom` scales around
+    /// the frame center.
     static func fillTransform(naturalSize: CGSize, preferred: CGAffineTransform, renderSize: CGSize, focus: Double, zoom: Double = 1) -> CGAffineTransform {
         let oriented = CGRect(origin: .zero, size: naturalSize).applying(preferred)
         let display = CGSize(width: abs(oriented.width), height: abs(oriented.height))
         guard display.width > 0, display.height > 0 else { return preferred }
         let scale = max(renderSize.width / display.width, renderSize.height / display.height)
         let scaled = CGSize(width: display.width * scale, height: display.height * scale)
-        let tx = -(scaled.width - renderSize.width) * CGFloat(min(max(focus, 0), 1))
+        let center = scaled.width * CGFloat(min(max(focus, 0), 1))
+        let tx = -min(max(center - renderSize.width / 2, 0), scaled.width - renderSize.width)
         let ty = -(scaled.height - renderSize.height) / 2
         var transform = preferred
             .concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
@@ -174,19 +176,28 @@ public enum Renderer {
         for (index, range) in ranges.enumerated() {
             let cutStart = cutStarts[index]
             events.append(.set(cutStart, base(index)))
-            for effect in plan.visualEffects {
+            // A push-in ramps the whole cut; other transforms inside it would
+            // overlap the ramp, which AVFoundation rejects.
+            let pushed = plan.visualEffects.contains { effect in
+                guard effect.type == "push_in", let s = Timecode.parse(effect.start) else { return false }
+                return s < range.end && (effect.end.flatMap(Timecode.parse) ?? s) > range.start
+            }
+            for effect in plan.visualEffects where !pushed || effect.type == "push_in" {
                 guard let s = Timecode.parse(effect.start) else { continue }
                 let e = effect.end.flatMap(Timecode.parse) ?? s + 1.5
                 let a = max(s, range.start), b = min(e, range.end)
                 guard b - a > 0.05 else { continue }
                 let oa = cutStart + a - range.start, ob = cutStart + b - range.start
                 switch effect.type {
-                case "zoom_in", "zoom_out":
-                    events.append(.set(oa, base(index, zoom: effect.type == "zoom_in" ? 1.25 : 1.1)))
+                case "zoom_in", "zoom_out", "punch_in":
+                    let zoom = ["zoom_in": 1.25, "zoom_out": 1.1, "punch_in": 1.12][effect.type] ?? 1
+                    events.append(.set(oa, base(index, zoom: zoom)))
                     events.append(.set(ob, base(index)))
+                case "push_in":
+                    events.append(.ramp(base(index), base(index, zoom: 1.06), oa, ob))
                 case "pan_left", "pan_right":
                     let f = index < focusByCut.count ? focusByCut[index] : 0.5
-                    let target = min(max(f + (effect.type == "pan_right" ? 0.5 : -0.5), 0), 1)
+                    let target = min(max(f + (effect.type == "pan_right" ? 0.35 : -0.35), 0), 1)
                     events.append(.ramp(base(index), base(index, focus: target), oa, ob))
                 default:
                     continue
@@ -233,12 +244,12 @@ public enum Renderer {
     }
 
     /// Text layer positioned by its top edge (`topY`, measured from the top of the frame).
-    static func textLayer(_ text: String, fontSize: CGFloat, color: CGColor, boxed: Bool, topY: CGFloat, renderSize: CGSize) -> CALayer {
+    static func textLayer(_ text: String, fontSize: CGFloat, color: CGColor, boxed: Bool, stroke: Double = -4, topY: CGFloat, renderSize: CGSize) -> CALayer {
         let attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font(size: fontSize),
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
             NSAttributedString.Key(kCTStrokeColorAttributeName as String): CGColor(red: 0, green: 0, blue: 0, alpha: 1),
-            NSAttributedString.Key(kCTStrokeWidthAttributeName as String): -4.0,
+            NSAttributedString.Key(kCTStrokeWidthAttributeName as String): stroke,
         ]
         let string = NSAttributedString(string: text, attributes: attributes)
         let maxWidth = renderSize.width * 0.88
@@ -314,7 +325,7 @@ public enum Renderer {
         }
 
         for telop in plan.telops {
-            let size = shortEdge * 84 / 1080
+            let size = shortEdge * (telop.style?.size == "large" ? 116 : 84) / 1080
             for (a, b) in outputWindows(start: telop.start, end: telop.end, defaultLength: 3, ranges: ranges) {
                 let layer = textLayer(telop.text, fontSize: size, color: color(telop.style?.color), boxed: telop.style?.box ?? false, topY: topY(for: telop.style?.position, estimatedHeight: size * 1.4), renderSize: renderSize)
                 show(layer, from: a, to: b)
@@ -323,11 +334,12 @@ public enum Renderer {
         }
 
         if plan.options.subtitles {
-            let size = shortEdge * 58 / 1080
+            // Bold white with a heavy outline, Japanese YouTube style.
+            let size = shortEdge * 72 / 1080
             for line in plan.subtitles {
                 for (a, b) in outputWindows(start: line.start, end: line.end, defaultLength: 2, ranges: ranges, minLength: 0.3) {
                     let bottom = renderSize.height * (landscape ? 0.95 : 0.84)
-                    let layer = textLayer(line.text, fontSize: size, color: color("white"), boxed: true, topY: bottom - size * 1.6, renderSize: renderSize)
+                    let layer = textLayer(line.text, fontSize: size, color: color("white"), boxed: false, stroke: -7, topY: bottom - size * 1.6, renderSize: renderSize)
                     show(layer, from: a, to: b)
                     parent.addSublayer(layer)
                 }

@@ -10,16 +10,19 @@ public struct CaptionStyle: Codable, Equatable, Sendable {
     public var position: String?
     public var box: Bool?
     public var backgroundAsset: String?
+    /// normal | large (opening titles)
+    public var size: String?
 
     enum CodingKeys: String, CodingKey {
-        case font, color, position, box
+        case font, color, position, box, size
         case backgroundAsset = "background_asset"
     }
 
-    public init(color: String? = nil, position: String? = nil, box: Bool? = nil) {
+    public init(color: String? = nil, position: String? = nil, box: Bool? = nil, size: String? = nil) {
         self.color = color
         self.position = position
         self.box = box
+        self.size = size
     }
 }
 

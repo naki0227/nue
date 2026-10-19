@@ -220,10 +220,12 @@ Use this shape:
 }}
 
 Rules:
-- Cuts are the parts to KEEP, in order. Drop dead air, false starts and repeated takes.
-- focus_point is the horizontal position (0 left .. 1 right) of the subject for vertical reframing.
+- Cuts are the parts to KEEP, in order. Drop dead air, filler words (えー, あのー, um), false starts and repeated takes.
+- focus_point is the horizontal center (0 left .. 1 right) of the speaker or subject; the vertical crop is centered on it.
+- Open with a hook: the first telop (0-2.5 s of the first cut) is the video's most intriguing line, style {{"position": "center", "size": "large"}}.
+- Alternate framing across jump cuts: give every other cut a "punch_in" effect spanning the cut; give long static cuts a "push_in".
 - Sound effect "type" must be one of: {sounds}.
-- Visual effect "type" is one of: zoom_in, zoom_out, pan_left, pan_right.
+- Visual effect "type" is one of: zoom_in (short emphasis), zoom_out, pan_left, pan_right, punch_in (whole cut, 1.12x), push_in (slow 6% push over the cut).
 - Overlay "asset" must be one of: {icons}.
 - Be selective: fewer, stronger moments beat many weak ones. Telops are 4-14 characters when Japanese.
 - Write telops and the thumbnail title in the language spoken in the video."#

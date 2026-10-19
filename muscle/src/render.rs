@@ -7,7 +7,7 @@
 use crate::assets;
 use crate::jobs::{data_path, log_json, update_job_status, JobUrls};
 use crate::media::{self, MediaInfo};
-use crate::plan::{parse_time, source_to_output, CaptionStyle, EditPlan};
+use crate::plan::{format_time, parse_time, source_to_output, CaptionStyle, EditPlan, TimedText};
 use crate::subtitles;
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -47,6 +47,7 @@ pub fn output_fps(source: f64) -> &'static str {
 struct VideoSettings {
     frame: Frame,
     fps: &'static str,
+    fps_value: f64,
     /// Filters applied to the raw source before reframing (HDR tone mapping).
     source_filter: String,
     /// Mild sharpening when reframing enlarges the picture noticeably (opt-in:
@@ -73,9 +74,15 @@ impl VideoSettings {
         } else {
             1.0
         };
+        let fps = output_fps(info.fps);
         VideoSettings {
             frame,
-            fps: output_fps(info.fps),
+            fps,
+            fps_value: fps
+                .split_once('/')
+                .and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?))
+                .or_else(|| fps.parse().ok())
+                .unwrap_or(30.0),
             source_filter,
             sharpen: enlargement > 1.15 && env::var("NUE_SHARPEN").is_ok_and(|v| v == "1"),
         }
@@ -93,6 +100,40 @@ impl VideoSettings {
             if self.sharpen { ",cas=0.35" } else { "" }
         )
     }
+}
+
+/// Source time until which a telop already shows this line (so the subtitle
+/// would only repeat it), or `None` when no telop does.
+fn repeated_until(plan: &EditPlan, line: &TimedText) -> Option<f64> {
+    let (Ok(start), Ok(end)) = (parse_time(&line.start), parse_time(&line.end)) else {
+        return None;
+    };
+    plan.telops
+        .iter()
+        .filter_map(|telop| {
+            let shown = telop.text.trim_end_matches('…');
+            let (s, e) = (parse_time(&telop.start).ok()?, parse_time(&telop.end).ok()?);
+            (s < end && e > start && !shown.is_empty() && line.text.trim().starts_with(shown))
+                .then_some(e)
+        })
+        .reduce(f64::max)
+}
+
+/// Text box width in characters: Latin glyphs are wider than half a CJK glyph.
+fn max_units(width: f64, font_size: u32, text: &str) -> usize {
+    let total = text.chars().count().max(1);
+    let ascii = text.chars().filter(|c| c.is_ascii()).count();
+    let unit = if ascii * 2 > total { 0.6 } else { 0.5 };
+    (width / (font_size as f64 * unit)) as usize
+}
+
+/// Slow push-in amount for long takes.
+const PUSH_IN: f64 = 1.06;
+
+/// Crop offset that centers the subject (`center`, 0..1 of the scaled width)
+/// in the frame without leaving the picture.
+fn crop_x(center: &str) -> String {
+    format!("clip(iw*({center})-ow/2,0,iw-ow)")
 }
 
 /// Encoder settings: visually lossless H.264 tagged as BT.709.
@@ -192,46 +233,57 @@ fn char_units(c: char) -> usize {
     }
 }
 
-/// Wraps text to `max_units`, preferring spaces for Latin text and allowing a
-/// break anywhere in CJK text. Japanese closing punctuation never starts a line.
+/// Wraps text to at most `max_lines` lines of `max_units`. Lines are balanced
+/// (no lone word on the last line), Latin text breaks at spaces, Japanese text
+/// breaks after a particle or punctuation when one is close, and closing
+/// punctuation never starts a line.
 pub fn wrap_text(text: &str, max_units: usize, max_lines: usize) -> String {
+    const BREAK_AFTER: &str = "はがをにでとものへやかね、。！？!?";
+    const NO_LINE_START: &str = "、。，．・ー」』）！？!?,.";
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let total: usize = text.chars().map(char_units).sum();
+    let needed = total.div_ceil(max_units.max(1)).clamp(1, max_lines.max(1));
+    let target = if needed > 1 {
+        (total.div_ceil(needed) + 2).min(max_units)
+    } else {
+        max_units
+    };
+
     let mut lines: Vec<String> = Vec::new();
-    let mut line = String::new();
-    let mut units = 0;
-    let mut last_space: Option<usize> = None;
-    for c in text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-    {
-        let w = char_units(c);
-        let forbidden_start = "、。，．・ー」』）！？!?,.".contains(c);
-        if units + w > max_units && !line.is_empty() && !forbidden_start {
-            if let Some(idx) = last_space.filter(|_| c != ' ' && c.is_ascii()) {
-                let rest = line[idx + 1..].to_string();
-                line.truncate(idx);
-                lines.push(line.trim_end().to_string());
-                units = rest.chars().map(char_units).sum();
-                line = rest;
+    let mut line: Vec<char> = Vec::new();
+    let width = |chars: &[char]| chars.iter().copied().map(char_units).sum::<usize>();
+    for c in text.chars() {
+        if width(&line) + char_units(c) > target && !line.is_empty() && !NO_LINE_START.contains(c) {
+            let split = if c.is_ascii() && c != ' ' {
+                line.iter().rposition(|x| *x == ' ').map(|i| (i, i + 1))
+            } else if !c.is_ascii() {
+                let earliest = line.len().saturating_sub(6);
+                line.iter()
+                    .rposition(|x| BREAK_AFTER.contains(*x))
+                    .filter(|i| *i >= earliest && (i + 1) * 2 >= line.len())
+                    .map(|i| (i + 1, i + 1))
             } else {
-                lines.push(line.trim_end().to_string());
-                line = String::new();
-                units = 0;
-            }
-            last_space = None;
+                None
+            };
+            let (head_end, tail_start) = split.unwrap_or((line.len(), line.len()));
+            let tail: Vec<char> = line[tail_start..].to_vec();
+            lines.push(
+                line[..head_end]
+                    .iter()
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string(),
+            );
+            line = tail;
             if c == ' ' {
                 continue;
             }
         }
-        if c == ' ' {
-            last_space = Some(line.len());
-        }
         line.push(c);
-        units += w;
     }
-    if !line.trim().is_empty() {
-        lines.push(line.trim().to_string());
+    let last: String = line.into_iter().collect();
+    if !last.trim().is_empty() {
+        lines.push(last.trim().to_string());
     }
     if lines.len() > max_lines {
         lines.truncate(max_lines);
@@ -267,22 +319,25 @@ fn styled_layer(
     frame: Frame,
     window: Option<(f64, f64)>,
 ) -> TextLayer {
-    let font_size = frame.font(84.0);
-    let max_units = (frame.width as f64 * 0.88 / (font_size as f64 * 0.5)) as usize;
+    let large = style.and_then(|s| s.size.as_deref()) == Some("large");
+    let font_size = frame.font(if large { 116.0 } else { 84.0 });
+    let max_units = max_units(frame.width as f64 * 0.88, font_size, text);
     TextLayer {
-        text: wrap_text(text, max_units, 3),
+        text: wrap_text(text, max_units, if large { 2 } else { 3 }),
         font_size,
         color: color(style.and_then(|s| s.color.as_deref())),
         y: text_layer_y(style.and_then(|s| s.position.as_deref()), frame),
         boxed: style.and_then(|s| s.start_box).unwrap_or(false),
-        border: (font_size / 14).max(2),
+        border: (font_size / if large { 10 } else { 14 }).max(2),
         window,
     }
 }
 
+/// Speech subtitles: bold white with a heavy outline (Japanese YouTube style),
+/// readable on any background without a box hiding the picture.
 fn subtitle_layer(text: &str, frame: Frame, window: (f64, f64)) -> TextLayer {
-    let font_size = frame.font(58.0);
-    let max_units = (frame.width as f64 * 0.9 / (font_size as f64 * 0.5)) as usize;
+    let font_size = frame.font(72.0);
+    let max_units = max_units(frame.width as f64 * 0.9, font_size, text);
     TextLayer {
         text: wrap_text(text, max_units, 2),
         font_size,
@@ -292,8 +347,8 @@ fn subtitle_layer(text: &str, frame: Frame, window: (f64, f64)) -> TextLayer {
         } else {
             "h*0.84-text_h".to_string()
         },
-        boxed: true,
-        border: (font_size / 14).max(2),
+        boxed: false,
+        border: (font_size / 7).max(3),
         window: Some(window),
     }
 }
@@ -384,8 +439,10 @@ fn render_segment(
         .arg(video_path);
     let mut next_input = 1;
 
-    // Reframe; pans move the crop window over time.
-    let mut x_expr = format!("(iw-ow)*{:.3}", segment.focus);
+    // Reframe around the subject (focus = its horizontal center); pans move
+    // that center over time.
+    let mut center = format!("{:.3}", segment.focus);
+    let mut panned = false;
     for effect in &plan.visual_effects {
         let direction = match effect.effect_type.as_str() {
             "pan_right" => 1.0,
@@ -394,15 +451,16 @@ fn render_segment(
         };
         if let Some((a, b)) = local_window(&effect.start, effect.end.as_deref(), 2.0, segment.range)
         {
-            x_expr = format!(
-                "if(lt(t,{a:.3}),{base},(iw-ow)*clip({f:.3}+{d}*0.5*min((t-{a:.3})/{len:.3},1),0,1))",
-                base = x_expr,
+            panned = true;
+            center = format!(
+                "if(lt(t,{a:.3}),{center},{f:.3}+{d}*0.35*min((t-{a:.3})/{len:.3},1))",
                 f = segment.focus,
                 d = direction,
                 len = (b - a).max(0.1),
             );
         }
     }
+    let x_expr = crop_x(&center);
     // Zoomed views are cut from the full-resolution source, not by enlarging the
     // already-reframed picture, so punch-ins stay sharp.
     let zooms: Vec<(f64, f64, f64)> = plan
@@ -412,6 +470,8 @@ fn render_segment(
             let zoom = match effect.effect_type.as_str() {
                 "zoom_in" => 1.25,
                 "zoom_out" => 1.1,
+                // Alternate framing between jump cuts.
+                "punch_in" => 1.12,
                 _ => return None,
             };
             local_window(&effect.start, effect.end.as_deref(), 1.5, segment.range)
@@ -421,17 +481,36 @@ fn render_segment(
     let branches = (0..=zooms.len())
         .map(|i| format!("[s{i}]"))
         .collect::<String>();
-    let mut graph = vec![
-        format!(
-            "[0:v]{}fps={},setsar=1,split={}{branches}",
-            video.source_filter,
-            video.fps,
-            zooms.len() + 1
-        ),
-        video.reframe("s0", "v0", &x_expr, 1.0),
-    ];
+    let mut graph = vec![format!(
+        "[0:v]{}fps={},setsar=1,split={}{branches}",
+        video.source_filter,
+        video.fps,
+        zooms.len() + 1
+    )];
+    // Long takes: a slow 6% push-in over the whole cut. The source is reframed
+    // 6% larger first so the push never enlarges pixels.
+    let push_in = !panned
+        && plan.visual_effects.iter().any(|e| {
+            e.effect_type == "push_in"
+                && local_window(&e.start, e.end.as_deref(), duration, segment.range)
+                    .is_some_and(|(a, b)| b - a > duration * 0.8)
+        });
+    if push_in {
+        let frames = (duration * video.fps_value).round().max(1.0);
+        graph.push(video.reframe("s0", "pz", &x_expr, PUSH_IN));
+        graph.push(format!(
+            "[pz]zoompan=z='1+{d}*min(on/{frames},1)':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':\
+             d=1:s={w}x{h}:fps={fps},setsar=1[v0]",
+            d = PUSH_IN - 1.0,
+            w = frame.width,
+            h = frame.height,
+            fps = video.fps,
+        ));
+    } else {
+        graph.push(video.reframe("s0", "v0", &x_expr, 1.0));
+    }
     let mut label = 0;
-    let focus_expr = format!("(iw-ow)*{:.3}", segment.focus);
+    let focus_expr = crop_x(&format!("{:.3}", segment.focus));
     for (i, (zoom, a, b)) in zooms.iter().enumerate() {
         graph.push(video.reframe(
             &format!("s{}", i + 1),
@@ -495,7 +574,12 @@ fn render_segment(
     }
     if plan.options.subtitles {
         for line in &plan.subtitles {
-            if let Some(window) = local_window(&line.start, Some(&line.end), 2.0, segment.range)
+            // While a telop shows the same words, hold the subtitle back.
+            let start = match repeated_until(plan, line) {
+                Some(until) => format_time(until.max(parse_time(&line.start).unwrap_or(0.0))),
+                None => line.start.clone(),
+            };
+            if let Some(window) = local_window(&start, Some(&line.end), 2.0, segment.range)
                 .filter(|(a, b)| b - a >= 0.3)
             {
                 layers.push(subtitle_layer(&line.text, frame, window));
@@ -814,7 +898,7 @@ fn render_thumbnail(
     );
     if !thumb.text.trim().is_empty() {
         let font_size = frame.font(140.0);
-        let max_units = (w as f64 * 0.9 / (font_size as f64 * 0.5)) as usize;
+        let max_units = max_units(w as f64 * 0.88, font_size, &thumb.text);
         let layer = TextLayer {
             text: wrap_text(&thumb.text, max_units, 3),
             font_size,
@@ -1037,6 +1121,15 @@ mod tests {
         assert_eq!(
             wrap_text("あいうえおかきくけこさしすせそ", 10, 2),
             "あいうえお\nかきくけこ…"
+        );
+        // Balanced, and broken after a particle instead of orphaning "か".
+        assert_eq!(
+            wrap_text("自分が国のために何ができるか", 25, 2),
+            "自分が国のために\n何ができるか"
+        );
+        assert_eq!(
+            wrap_text("you ask what you can do for your", 26, 2),
+            "you ask what you\ncan do for your"
         );
     }
 

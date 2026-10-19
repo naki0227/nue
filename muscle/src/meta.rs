@@ -103,6 +103,7 @@ fn style_for(name: Option<&str>) -> CaptionStyle {
         position: Some("top".to_string()),
         start_box: Some(true),
         background_asset: None,
+        size: None,
     }
 }
 

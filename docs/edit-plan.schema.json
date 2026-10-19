@@ -14,6 +14,7 @@
         "color": { "enum": ["white", "yellow", "cyan", "blue", "red", "pink", "green", "orange", "black"] },
         "position": { "enum": ["top", "center", "middle", "bottom"] },
         "box": { "type": "boolean" },
+        "size": { "enum": ["normal", "large", null], "description": "large is used for opening titles" },
         "background_asset": { "type": "string" }
       }
     },
@@ -47,7 +48,7 @@
           "description": { "type": ["string", "null"] },
           "caption": { "type": ["string", "null"], "description": "Legacy: text shown for the whole cut" },
           "caption_style": { "$ref": "#/$defs/style" },
-          "focus_point": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Horizontal subject position used when reframing" }
+          "focus_point": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Horizontal center of the subject; vertical crops are centered on it" }
         }
       }
     },
@@ -72,7 +73,7 @@
         "properties": {
           "start": { "$ref": "#/$defs/time" },
           "end": { "$ref": "#/$defs/time" },
-          "type": { "enum": ["zoom_in", "zoom_out", "pan_left", "pan_right"] },
+          "type": { "enum": ["zoom_in", "zoom_out", "pan_left", "pan_right", "punch_in", "push_in"], "description": "punch_in: 1.12x for a whole cut (alternated across jump cuts); push_in: slow 6% push over a cut" },
           "speed": { "type": ["string", "null"] }
         }
       }

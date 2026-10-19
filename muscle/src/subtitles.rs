@@ -34,10 +34,27 @@ fn whisper_binary() -> String {
     env::var("NUE_WHISPER_BIN").unwrap_or_else(|_| "whisper-cli".to_string())
 }
 
-/// Transcribes speech into subtitle lines. Sources, in order: a sidecar
-/// `<video>.srt` next to the input, then whisper.cpp. Returns an empty list
-/// when neither is available so rendering can continue without subtitles.
-pub fn transcribe(input: &Path, work_dir: &Path, has_audio: bool) -> Vec<TimedText> {
+/// A recognized word (or Japanese token) with source timestamps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+    /// Whisper marks word boundaries in spaced languages with a leading space.
+    pub space_before: bool,
+}
+
+/// Speech transcript: word timings (whisper only) and display lines.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Transcript {
+    pub words: Vec<Word>,
+    pub lines: Vec<TimedText>,
+}
+
+/// Transcribes speech. Sources, in order: a sidecar `<video>.srt` next to the
+/// input (lines only), then whisper.cpp (word timings). Returns an empty
+/// transcript when neither is available so editing continues without speech.
+pub fn transcribe(input: &Path, work_dir: &Path, has_audio: bool) -> Transcript {
     for sidecar in [
         input.with_extension("srt"),
         PathBuf::from(format!("{}.srt", input.display())),
@@ -49,11 +66,14 @@ pub fn transcribe(input: &Path, work_dir: &Path, has_audio: bool) -> Vec<TimedTe
                 Some("subtitles_sidecar"),
                 sidecar.to_str(),
             );
-            return parse_srt(&content);
+            return Transcript {
+                words: Vec::new(),
+                lines: parse_srt(&content),
+            };
         }
     }
     if !has_audio {
-        return Vec::new();
+        return Transcript::default();
     }
     let Some(model) = whisper_model() else {
         log_json(
@@ -62,17 +82,22 @@ pub fn transcribe(input: &Path, work_dir: &Path, has_audio: bool) -> Vec<TimedTe
             Some("subtitles_skipped"),
             None,
         );
-        return Vec::new();
+        return Transcript::default();
     };
     match run_whisper(input, work_dir, &model) {
-        Ok(lines) => {
+        Ok(words) => {
+            let lines = group_words(&words);
             log_json(
                 "INFO",
-                &format!("Transcribed {} subtitle lines", lines.len()),
+                &format!(
+                    "Transcribed {} words into {} lines",
+                    words.len(),
+                    lines.len()
+                ),
                 Some("subtitles_done"),
                 None,
             );
-            lines
+            Transcript { words, lines }
         }
         Err(error) => {
             log_json(
@@ -81,12 +106,12 @@ pub fn transcribe(input: &Path, work_dir: &Path, has_audio: bool) -> Vec<TimedTe
                 Some("subtitles_failed"),
                 None,
             );
-            Vec::new()
+            Transcript::default()
         }
     }
 }
 
-fn run_whisper(input: &Path, work_dir: &Path, model: &Path) -> Result<Vec<TimedText>> {
+fn run_whisper(input: &Path, work_dir: &Path, model: &Path) -> Result<Vec<Word>> {
     fs::create_dir_all(work_dir)?;
     let wav = work_dir.join("speech.wav");
     media::extract_speech_wav(input, &wav)?;
@@ -102,8 +127,9 @@ fn run_whisper(input: &Path, work_dir: &Path, model: &Path) -> Result<Vec<TimedT
             &language,
             "-osrt",
             "-np",
+            // One word per entry: needed to cut filler words precisely.
             "--max-len",
-            "32",
+            "1",
             "--split-on-word",
         ])
         .arg("-of")
@@ -118,7 +144,89 @@ fn run_whisper(input: &Path, work_dir: &Path, model: &Path) -> Result<Vec<TimedT
     }
     let srt = fs::read_to_string(out_base.with_extension("srt"))?;
     let _ = fs::remove_file(&wav);
-    Ok(parse_srt(&srt))
+    Ok(parse_words(&srt))
+}
+
+/// Parses whisper's one-word-per-entry SRT, keeping the leading-space marker.
+pub fn parse_words(content: &str) -> Vec<Word> {
+    content
+        .replace("\r\n", "\n")
+        .split("\n\n")
+        .filter_map(|block| {
+            let mut lines = block.lines().filter(|l| !l.trim().is_empty());
+            let mut line = lines.next()?;
+            if !line.contains("-->") {
+                line = lines.next()?;
+            }
+            let (start, end) = line.split_once("-->")?;
+            let start = parse_time(start.trim()).ok()?;
+            let end = parse_time(end.split_whitespace().next()?).ok()?;
+            let raw = lines.collect::<Vec<_>>().join(" ");
+            let text = raw.trim().to_string();
+            (!text.is_empty() && !is_noise_marker(&text)).then(|| Word {
+                space_before: raw.starts_with(' '),
+                text,
+                start,
+                end: end.max(start),
+            })
+        })
+        .collect()
+}
+
+fn units(text: &str) -> usize {
+    text.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum()
+}
+
+/// Groups words into readable subtitle lines: breaks at pauses, sentence
+/// ends, or about 16 full-width (32 half-width) characters.
+pub fn group_words(words: &[Word]) -> Vec<TimedText> {
+    const MAX_UNITS: usize = 32;
+    const MAX_GAP: f64 = 0.6;
+    let mut lines = Vec::new();
+    let mut text = String::new();
+    let (mut start, mut end) = (0.0, 0.0);
+    let flush = |text: &mut String, start: f64, end: f64, lines: &mut Vec<TimedText>| {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            lines.push(TimedText {
+                start: format_time(start),
+                end: format_time(end),
+                text: trimmed.to_string(),
+                style: None,
+            });
+        }
+        text.clear();
+    };
+    for word in words {
+        let piece = word.text.trim();
+        if piece.is_empty() {
+            continue;
+        }
+        let joiner = if word.space_before && !text.is_empty() {
+            " "
+        } else {
+            ""
+        };
+        if !text.is_empty()
+            && (word.start - end > MAX_GAP
+                || units(&text) + units(joiner) + units(piece) > MAX_UNITS)
+        {
+            flush(&mut text, start, end, &mut lines);
+        }
+        if text.is_empty() {
+            start = word.start;
+            text.push_str(piece);
+        } else {
+            text.push_str(joiner);
+            text.push_str(piece);
+        }
+        end = word.end;
+        if piece.ends_with(['。', '！', '？', '.', '!', '?']) {
+            flush(&mut text, start, end, &mut lines);
+        }
+    }
+    flush(&mut text, start, end, &mut lines);
+    lines
 }
 
 pub fn parse_srt(content: &str) -> Vec<TimedText> {
@@ -194,6 +302,40 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = "1\n00:00:00,000 --> 00:00:02,500\n こんにちは\n\n2\r\n00:00:03,000 --> 00:00:05,000\r\n[Music]\r\n\r\n3\n00:00:05,000 --> 00:00:07,000\nline one\nline two\n";
+
+    fn word(text: &str, start: f64, end: f64, space: bool) -> Word {
+        Word {
+            text: text.to_string(),
+            start,
+            end,
+            space_before: space,
+        }
+    }
+
+    #[test]
+    fn parses_word_level_srt() {
+        let srt = "1\n00:00:00,000 --> 00:00:00,320\n\n\n2\n00:00:00,320 --> 00:00:00,330\n And\n\n3\n00:00:00,330 --> 00:00:00,740\n so,\n\n4\n00:00:01,000 --> 00:00:01,200\nです\n";
+        let words = parse_words(srt);
+        assert_eq!(words.len(), 3);
+        assert_eq!(words[0], word("And", 0.32, 0.33, true));
+        assert!(!words[2].space_before);
+    }
+
+    #[test]
+    fn groups_words_into_lines() {
+        let words = vec![
+            word("Hello", 0.0, 0.4, true),
+            word("world.", 0.5, 0.9, true),
+            word("今日は", 2.0, 2.4, false),
+            word("晴れ", 2.4, 2.8, false),
+        ];
+        let lines = group_words(&words);
+        assert_eq!(
+            lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(),
+            ["Hello world.", "今日は晴れ"]
+        );
+        assert_eq!(lines[1].start, "00:00:02.000");
+    }
 
     #[test]
     fn parses_srt_and_skips_noise() {

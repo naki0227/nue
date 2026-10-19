@@ -117,5 +117,9 @@ final class RendererTests: XCTestCase {
         let left = CGRect(x: 0, y: 0, width: 1920, height: 1080).applying(
             Renderer.fillTransform(naturalSize: CGSize(width: 1920, height: 1080), preferred: .identity, renderSize: render, focus: 0))
         XCTAssertEqual(left.minX, 0, accuracy: 0.5)
+        // Subject at 75% of the width: the crop is centered on it.
+        let right = CGRect(x: 0, y: 0, width: 1920, height: 1080).applying(
+            Renderer.fillTransform(naturalSize: CGSize(width: 1920, height: 1080), preferred: .identity, renderSize: render, focus: 0.75))
+        XCTAssertEqual(-right.minX + render.width / 2, right.width * 0.75, accuracy: 0.5)
     }
 }

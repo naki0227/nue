@@ -30,6 +30,9 @@ pub struct CaptionStyle {
     pub start_box: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background_asset: Option<String>,
+    /// normal | large (opening titles)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

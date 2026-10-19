@@ -228,17 +228,9 @@ fn analyze_video(
     let options = metadata.options();
     let work_dir = data_path("temp").join(format!("{}_analyze", job_id));
 
-    let transcript = if options.subtitles != Some(false) {
-        set_status(
-            &job_id,
-            "analyzing",
-            "Transcribing speech for subtitles.",
-            25,
-        )?;
-        subtitles::transcribe(&raw_path, &work_dir, info.has_audio)
-    } else {
-        Vec::new()
-    };
+    // Transcribe even with subtitles off: word timings also drive the cuts.
+    set_status(&job_id, "analyzing", "Transcribing speech.", 25)?;
+    let transcript = subtitles::transcribe(&raw_path, &work_dir, info.has_audio);
 
     let analyzer = options
         .analyzer
@@ -258,7 +250,7 @@ fn analyze_video(
             &raw_path,
             &file_name,
             &job_id,
-            &transcript,
+            &transcript.lines,
             metadata.script.as_deref(),
         ) {
             Ok(gemini_plan) if gemini_plan.cut_ranges().is_empty() => log_json(
@@ -269,7 +261,7 @@ fn analyze_video(
             ),
             Ok(mut gemini_plan) => {
                 if gemini_plan.subtitles.is_empty() {
-                    gemini_plan.subtitles = transcript.clone();
+                    gemini_plan.subtitles = transcript.lines.clone();
                 }
                 plan = Some(gemini_plan);
             }
@@ -305,11 +297,21 @@ fn analyze_video(
         }
     };
 
+    let analyzed_telops = plan.telops.len();
     meta::apply_metadata(&mut plan, metadata, info.duration);
-    // The creator's own telop beats a transcript fragment as a thumbnail title.
+    // The creator's own telop (script or manual caption) beats a transcript
+    // fragment as the opening title and thumbnail text.
     if plan.analyzer.as_deref() == Some("local") {
-        if let (Some(thumb), Some(telop)) = (plan.thumbnail.as_mut(), plan.telops.first()) {
-            thumb.text = telop.text.clone();
+        if let Some(own) = plan.telops.get(analyzed_telops).map(|t| t.text.clone()) {
+            if let Some(thumb) = plan.thumbnail.as_mut() {
+                thumb.text = own.clone();
+            }
+            let is_hook = |t: &plan::TimedText| {
+                t.style.as_ref().and_then(|s| s.size.as_deref()) == Some("large")
+            };
+            if let Some(hook) = plan.telops.iter_mut().find(|t| is_hook(t)) {
+                hook.text = own;
+            }
         }
     }
     let _ = fs::remove_dir_all(&work_dir);

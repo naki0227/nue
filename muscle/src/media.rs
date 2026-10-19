@@ -195,6 +195,44 @@ pub fn scene_changes(path: &Path, threshold: f64) -> Result<Vec<f64>> {
         .collect())
 }
 
+/// Width of the low-resolution motion map used for subject-aware framing.
+pub const MOTION_COLUMNS: usize = 64;
+
+/// Per-frame horizontal motion energy (frame differences summed per column),
+/// sampled 4 times a second. Moving people and gestures dominate it; a static
+/// background contributes nothing.
+pub fn motion_columns(path: &Path) -> Result<Vec<(f64, Vec<f32>)>> {
+    const RATE: f64 = 4.0;
+    const ROWS: usize = 36;
+    let output = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-i"])
+        .arg(path)
+        .args(["-an", "-vf"])
+        .arg(format!(
+            "fps={RATE},scale={MOTION_COLUMNS}:{ROWS},format=gray,tblend=all_mode=difference"
+        ))
+        .args(["-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        .output()
+        .context("Failed to run ffmpeg motion analysis")?;
+    let frame_size = MOTION_COLUMNS * ROWS;
+    Ok(output
+        .stdout
+        .chunks_exact(frame_size)
+        .enumerate()
+        .map(|(i, frame)| {
+            let mut columns = vec![0f32; MOTION_COLUMNS];
+            for (p, value) in frame.iter().enumerate() {
+                // Ignore sensor noise and compression shimmer.
+                if *value > 6 {
+                    columns[p % MOTION_COLUMNS] += *value as f32;
+                }
+            }
+            // tblend drops the first frame, so frame i spans samples i..i+1.
+            ((i as f64 + 1.0) / RATE, columns)
+        })
+        .collect())
+}
+
 /// Extracts 16 kHz mono WAV, the input format speech recognizers expect.
 pub fn extract_speech_wav(path: &Path, out: &Path) -> Result<()> {
     let status = Command::new("ffmpeg")
