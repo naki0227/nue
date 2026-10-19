@@ -10,6 +10,8 @@ data/output/*
 !data/output/.gitkeep
 data/temp/*
 !data/temp/.gitkeep
+data/jobs/
+data/models/
 data/bgm/*
 !data/bgm/.gitkeep
 # Keep data/se as they are small custom assets
@@ -18,16 +20,10 @@ data/bgm/*
 data/*.mp4
 data/*.db
 
-# Python
+# Python (asset scripts)
 __pycache__/
 *.py[cod]
-.venv/
-venv/
 *.log
-
-# Go
-gateway/gateway
-gateway/tmp/
 
 # Rust
 muscle/target/
@@ -42,3 +38,9 @@ web/.docusaurus/
 # OS
 .DS_Store
 **/.DS_Store
+
+# iOS
+ios/Nue.xcodeproj/
+ios/NueApp/Info.plist
+ios/NueKit/.build/
+ios/build/

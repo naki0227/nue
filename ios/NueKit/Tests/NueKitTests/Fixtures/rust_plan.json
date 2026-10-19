@@ -1,0 +1,125 @@
+{
+  "job_id": "talk",
+  "original_filename": "talk.mp4",
+  "analyzer": "local",
+  "cuts": [
+    {
+      "start_time": "00:00:00.000",
+      "end_time": "00:00:11.150"
+    },
+    {
+      "start_time": "00:00:13.956",
+      "end_time": "00:00:25.400"
+    }
+  ],
+  "editing_style": {
+    "mood": "energetic",
+    "tempo": "fast"
+  },
+  "se_events": [
+    {
+      "timestamp": "00:00:00.750",
+      "type": "impact",
+      "tag": "loudness_peak"
+    },
+    {
+      "timestamp": "00:00:14.750",
+      "type": "impact",
+      "tag": "loudness_peak"
+    }
+  ],
+  "visual_effects": [
+    {
+      "start": "00:00:00.750",
+      "end": "00:00:01.950",
+      "type": "zoom_in",
+      "speed": "fast"
+    },
+    {
+      "start": "00:00:14.750",
+      "end": "00:00:15.950",
+      "type": "zoom_in",
+      "speed": "fast"
+    }
+  ],
+  "telops": [
+    {
+      "start": "00:00:02.000",
+      "end": "00:00:06.000",
+      "text": "名言タイム！",
+      "style": {
+        "color": "yellow",
+        "position": "top",
+        "box": true
+      }
+    }
+  ],
+  "subtitles": [
+    {
+      "start": "00:00:00.000",
+      "end": "00:00:04.010",
+      "text": "And so my fellow Americans ask"
+    },
+    {
+      "start": "00:00:04.010",
+      "end": "00:00:06.800",
+      "text": "not what your country can do"
+    },
+    {
+      "start": "00:00:06.800",
+      "end": "00:00:09.720",
+      "text": "for you ask what you can do for"
+    },
+    {
+      "start": "00:00:09.720",
+      "end": "00:00:11.000",
+      "text": "your country."
+    },
+    {
+      "start": "00:00:11.000",
+      "end": "00:00:18.110",
+      "text": "And so my fellow Americans ask"
+    },
+    {
+      "start": "00:00:18.110",
+      "end": "00:00:21.150",
+      "text": "not what your country can do"
+    },
+    {
+      "start": "00:00:21.150",
+      "end": "00:00:23.710",
+      "text": "for you ask what you can do for"
+    },
+    {
+      "start": "00:00:23.710",
+      "end": "00:00:25.000",
+      "text": "your country."
+    }
+  ],
+  "overlays": [
+    {
+      "asset": "exclaim",
+      "start": "00:00:00.750",
+      "end": "00:00:01.750",
+      "position": "top_right",
+      "scale": 0.18
+    },
+    {
+      "asset": "exclaim",
+      "start": "00:00:14.750",
+      "end": "00:00:15.750",
+      "position": "top_right",
+      "scale": 0.18
+    }
+  ],
+  "thumbnail": {
+    "timestamp": "00:00:00.750",
+    "text": "名言タイム！",
+    "color": "yellow"
+  },
+  "options": {
+    "bgm": true,
+    "sound_effects": true,
+    "subtitles": true
+  }
+}

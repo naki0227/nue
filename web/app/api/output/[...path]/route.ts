@@ -1,5 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { dataPath, safeName } from "../../_lib/data";
 
@@ -18,22 +20,54 @@ const contentTypes: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
+  ".srt": "application/x-subrip; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+function stream(filePath: string, start?: number, end?: number) {
+  return Readable.toWeb(createReadStream(filePath, { start, end })) as ReadableStream;
+}
+
+// Supports HTTP Range requests: Safari (and iOS) will not play video without them.
+export async function GET(request: Request, context: RouteContext) {
+  let filePath: string;
+  let size: number;
   try {
     const { path: segments } = await context.params;
-    const filename = safeName(segments.join("/"));
-    const body = await readFile(path.join(dataPath("output"), filename));
-    const contentType = contentTypes[path.extname(filename).toLowerCase()] ?? "application/octet-stream";
-
-    return new NextResponse(body, {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "public, max-age=3600",
-      },
-    });
+    filePath = path.join(dataPath("output"), safeName(segments.join("/")));
+    size = (await stat(filePath)).size;
   } catch {
     return NextResponse.json({ error: "Output not found" }, { status: 404 });
   }
+
+  const extension = path.extname(filePath).toLowerCase();
+  const headers: Record<string, string> = {
+    "Content-Type": contentTypes[extension] ?? "application/octet-stream",
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "no-cache",
+  };
+  if (extension === ".srt" || extension === ".json") {
+    headers["Content-Disposition"] = `attachment; filename="${path.basename(filePath)}"`;
+  }
+
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get("range") ?? "");
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(size - Number(range[2]), 0);
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+    }
+    return new NextResponse(stream(filePath, start, end), {
+      status: 206,
+      headers: {
+        ...headers,
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Content-Length": String(end - start + 1),
+      },
+    });
+  }
+
+  return new NextResponse(stream(filePath), {
+    headers: { ...headers, "Content-Length": String(size) },
+  });
 }

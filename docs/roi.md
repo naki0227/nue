@@ -8,7 +8,7 @@
 
 今は残すもの:
 
-- `gateway -> data/raw -> brain -> data/json -> muscle -> data/output` の流れ
+- `web -> data/raw -> muscle (analyze) -> data/json -> muscle (render) -> data/output` の流れ
 - `data/jobs/*.json` によるジョブ状態管理
 - Docker Compose と共有ボリューム
 
@@ -36,6 +36,8 @@
 | ショート動画1本 | 60分 | 10分 | 10-20分 | 50分 |
 | 10分尺のYouTube動画 | 120分 | 20分 | 15-30分 | 100分 |
 | 30分素材からハイライト化 | 240分 | 35分 | 30-60分 | 205分 |
+
+ローカル解析（`--analyzer local`）ならAPI費は0円で、ツール費は計算資源のみです。
 
 機械/API待ち時間も納期には影響します。ただしコスト削減の主役は、人間が編集画面に張り付かなくてよくなる時間です。
 

@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  muscle:
+    name: Rust CLI / renderer
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: muscle
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install ffmpeg and CJK fonts
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: muscle
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  web:
+    name: Next.js web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build images
+        run: WHISPER_MODEL=tiny docker compose build
+      - name: Render a clip inside the worker image (with subtitles)
+        run: |
+          mkdir -p smoke
+          cp -r data/se data/icons data/bgm smoke/
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          ffmpeg -y -loglevel error -f lavfi -i testsrc2=s=640x360:r=30:d=6 \
+            -f lavfi -i sine=f=300:d=6 -c:v libx264 -preset ultrafast -c:a aac smoke/clip.mp4
+          docker run --rm -v "$PWD/smoke:/app/data" nue-muscle muscle run /app/data/clip.mp4
+          test -s smoke/output/clip_edited.mp4
+          test -s smoke/output/clip_thumb.jpg
+          grep -q '"status": "completed"' smoke/jobs/clip.json
+      - name: Web container serves the UI and API
+        run: |
+          docker compose up -d web
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/ >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:3000/ | grep -q "Nue"
+          curl -sf http://localhost:3000/api/assets | grep -q '"impact"'
+          docker compose down
+
+  ios:
+    name: iOS app (NueKit + SwiftUI)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - run: xcodebuild -version && swift --version
+      - name: NueKit unit + AVFoundation render tests
+        run: swift test --package-path ios/NueKit
+      - name: Generate the Xcode project
+        run: brew install xcodegen && cd ios && xcodegen generate
+      - name: Build the app for the iOS simulator
+        run: |
+          cd ios
+          xcodebuild -project Nue.xcodeproj -scheme Nue -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build | tail -40
+          exit ${PIPESTATUS[0]}
+      - name: Run NueKit tests and the app on an iOS simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k, v in sorted(d.items(), reverse=True) if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          echo "Simulator $UDID"
+          xcrun simctl boot "$UDID"
+          # Rendering tests run on the macOS host above: simulators on CI VMs have no
+          # H.264 encoder (VideoToolbox -12900), so only the planner tests run here.
+          (cd ios/NueKit && xcodebuild test -scheme NueKit -destination "id=$UDID" -skip-testing:NueKitTests/RendererTests | tail -25; exit ${PIPESTATUS[0]})
+          cd ios
+          xcodebuild -project Nue.xcodeproj -scheme Nue -destination "id=$UDID" -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -3
+          xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/Nue.app
+          xcrun simctl launch "$UDID" com.enludus.nue
+          sleep 10
+          # Still running after 10 s: the app launched without crashing.
+          xcrun simctl spawn "$UDID" launchctl list | grep -q com.enludus.nue
+          xcrun simctl io "$UDID" screenshot ../ios-launch.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-launch-screenshot
+          path: ios-launch.png
+          if-no-files-found: ignore

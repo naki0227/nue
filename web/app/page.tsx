@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Upload, CheckCircle, Loader2, Play, ChevronDown, ChevronUp, Plus, X, Settings } from "lucide-react";
+import PlanEditor from "./PlanEditor";
+import { Upload, CheckCircle, Loader2, Play, ChevronDown, ChevronUp, Plus, X, Settings, Download, Pencil } from "lucide-react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const uploadUrl = API_BASE_URL ? `${API_BASE_URL}/upload` : "/api/upload";
@@ -38,12 +39,25 @@ interface ManualEffect {
 
 interface JobStatus {
   job_id: string;
-  status: "uploaded" | "analyzing" | "rendering" | "completed" | "failed";
+  status: "uploaded" | "analyzing" | "analyzed" | "rendering" | "completed" | "failed";
   message?: string;
   progress?: number;
   output_url?: string;
   thumbnail_url?: string;
+  subtitle_url?: string;
+  plan_url?: string;
+  updated_at?: string | number;
 }
+
+interface OutputLinks {
+  video: string;
+  thumbnail?: string;
+  subtitles?: string;
+  plan?: string;
+}
+
+type Analyzer = "auto" | "local" | "gemini";
+type VideoFormat = "vertical" | "horizontal" | "square";
 
 export default function Home() {
   const [dragActive, setDragActive] = useState(false);
@@ -51,7 +65,9 @@ export default function Home() {
   const [status, setStatus] = useState<"idle" | "uploading" | "processing" | "done" | "failed">("idle");
   const [progress, setProgress] = useState(0);
   const [jobMessage, setJobMessage] = useState("");
-  const [outputUrl, setOutputUrl] = useState("");
+  const [output, setOutput] = useState<OutputLinks | null>(null);
+  const [jobId, setJobId] = useState("");
+  const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Advanced options state
@@ -59,6 +75,10 @@ export default function Home() {
   const [script, setScript] = useState("");
   const [autoSoundEffects, setAutoSoundEffects] = useState(true);
   const [generateBGM, setGenerateBGM] = useState(true);
+  const [subtitles, setSubtitles] = useState(true);
+  const [jumpCut, setJumpCut] = useState(true);
+  const [analyzer, setAnalyzer] = useState<Analyzer>("auto");
+  const [videoFormat, setVideoFormat] = useState<VideoFormat>("vertical");
 
   // Manual instructions state
   const [manualCuts, setManualCuts] = useState<ManualCut[]>([]);
@@ -100,7 +120,7 @@ export default function Home() {
     setStatus("uploading");
     setProgress(0);
     setJobMessage("");
-    setOutputUrl("");
+    setOutput(null);
     const formData = new FormData();
     formData.append("file", file);
 
@@ -115,6 +135,10 @@ export default function Home() {
       options: {
         auto_sound_effects: autoSoundEffects,
         generate_bgm: generateBGM,
+        subtitles,
+        jump_cut: jumpCut,
+        analyzer,
+        format: videoFormat,
       },
     };
 
@@ -136,6 +160,7 @@ export default function Home() {
           setStatus("processing");
           const response = JSON.parse(xhr.responseText) as { job_id?: string };
           if (response.job_id) {
+            setJobId(response.job_id);
             pollJob(response.job_id);
           }
         } else {
@@ -167,7 +192,15 @@ export default function Home() {
       setProgress(job.progress ?? 0);
 
       if (job.status === "completed" && job.output_url) {
-        setOutputUrl(resolveOutputUrl(job.output_url));
+        // Re-renders overwrite the same file names, so bust the browser cache.
+        const version = `?v=${job.updated_at ?? Date.now()}`;
+        const link = (url?: string) => (url ? `${resolveOutputUrl(url)}${version}` : undefined);
+        setOutput({
+          video: link(job.output_url)!,
+          thumbnail: link(job.thumbnail_url),
+          subtitles: link(job.subtitle_url),
+          plan: link(job.plan_url),
+        });
         setStatus("done");
         return;
       }
@@ -271,7 +304,7 @@ export default function Home() {
               <Loader2 className="w-12 h-12 text-purple-400 animate-spin mx-auto" />
               <div className="space-y-1">
                 <p className="text-xl font-medium text-gray-200">Processing</p>
-                <p className="text-sm text-gray-500">{jobMessage || "Brain is analyzing your video..."}</p>
+                <p className="text-sm text-gray-500">{jobMessage || "Analyzing your video..."}</p>
                 {file && <p className="text-gray-500 text-xs truncate">{file.name}</p>}
                 <p className="text-sm text-gray-500">{progress}%</p>
               </div>
@@ -288,18 +321,42 @@ export default function Home() {
                 <p className="text-gray-400">Your video has been transmuted.</p>
               </div>
 
-              {outputUrl && (
+              {output && (
                 <video
-                  src={outputUrl}
+                  src={output.video}
+                  poster={output.thumbnail}
                   controls
+                  playsInline
                   className="w-full max-h-[520px] rounded-lg bg-black"
                 />
               )}
 
+              {output && (
+                <div className="flex flex-wrap gap-2 justify-center text-sm">
+                  {[
+                    { href: output.thumbnail, label: "Thumbnail" },
+                    { href: output.subtitles, label: "Subtitles (.srt)" },
+                    { href: output.plan, label: "Edit plan (.json)" },
+                  ]
+                    .filter((link): link is { href: string; label: string } => Boolean(link.href))
+                    .map((link) => (
+                      <a
+                        key={link.label}
+                        href={link.href}
+                        download
+                        onClick={(e) => e.stopPropagation()}
+                        className="px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 transition flex items-center gap-1"
+                      >
+                        <Download className="w-3.5 h-3.5" /> {link.label}
+                      </a>
+                    ))}
+                </div>
+              )}
+
               <div className="flex gap-4 justify-center">
-                {outputUrl && (
+                {output && (
                   <a
-                    href={outputUrl}
+                    href={output.video}
                     target="_blank"
                     rel="noreferrer"
                     onClick={(e) => e.stopPropagation()}
@@ -308,13 +365,37 @@ export default function Home() {
                     <Play className="w-4 h-4 inline mr-2" fill="currentColor" /> Watch
                   </a>
                 )}
+                {output?.plan && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditing(!editing); }}
+                    className="px-6 py-2 rounded-full bg-white/10 text-white font-semibold hover:bg-white/20 transition flex items-center gap-2"
+                  >
+                    <Pencil className="w-4 h-4" /> {editing ? "Close editor" : "Edit"}
+                  </button>
+                )}
                 <button
-                  onClick={(e) => { e.stopPropagation(); setStatus("idle"); setFile(null); setOutputUrl(""); setProgress(0); }}
+                  onClick={(e) => { e.stopPropagation(); setStatus("idle"); setFile(null); setOutput(null); setProgress(0); setEditing(false); }}
                   className="px-6 py-2 rounded-full bg-white/10 text-white font-semibold hover:bg-white/20 transition"
                 >
                   New Upload
                 </button>
               </div>
+
+              {editing && output?.plan && jobId && (
+                <div className="w-full pt-6 border-t border-white/10">
+                  <PlanEditor
+                    jobId={jobId}
+                    planUrl={output.plan}
+                    onQueued={() => {
+                      setEditing(false);
+                      setStatus("processing");
+                      setProgress(65);
+                      setJobMessage("Re-render queued.");
+                      window.setTimeout(() => pollJob(jobId), 1500);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -325,7 +406,7 @@ export default function Home() {
                 <p className="text-gray-400">{jobMessage || "Check the service logs for details."}</p>
               </div>
               <button
-                onClick={(e) => { e.stopPropagation(); setStatus("idle"); setFile(null); setOutputUrl(""); setProgress(0); }}
+                onClick={(e) => { e.stopPropagation(); setStatus("idle"); setFile(null); setOutput(null); setProgress(0); }}
                 className="px-6 py-2 rounded-full bg-white/10 text-white font-semibold hover:bg-white/20 transition"
               >
                 New Upload
@@ -358,7 +439,7 @@ export default function Home() {
                   <textarea
                     value={script}
                     onChange={(e) => setScript(e.target.value)}
-                    placeholder="00:00:00 - Introduction&#10;00:00:15 - Main point (emphasis HERE)&#10;00:00:30 - Conclusion"
+                    placeholder={"00:00:02 - 今日のテーマ\n00:00:15 - ここがポイント！\n00:00:30 - まとめ"}
                     className="w-full h-32 px-4 py-3 bg-black/50 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-colors resize-none"
                   />
                 </div>
@@ -382,6 +463,51 @@ export default function Home() {
                       className="w-5 h-5 rounded bg-black/50 border-white/10 text-purple-500 focus:ring-purple-500"
                     />
                     <span className="text-sm text-gray-300">Add Background Music</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={subtitles}
+                      onChange={(e) => setSubtitles(e.target.checked)}
+                      className="w-5 h-5 rounded bg-black/50 border-white/10 text-purple-500 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-300">Subtitles from speech (on-device whisper)</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={jumpCut}
+                      onChange={(e) => setJumpCut(e.target.checked)}
+                      className="w-5 h-5 rounded bg-black/50 border-white/10 text-purple-500 focus:ring-purple-500"
+                    />
+                    <span className="text-sm text-gray-300">Jump cut (remove silent pauses)</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label className="block">
+                    <span className="block text-sm font-medium text-gray-300 mb-2">Format</span>
+                    <select
+                      value={videoFormat}
+                      onChange={(e) => setVideoFormat(e.target.value as VideoFormat)}
+                      className="w-full px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                    >
+                      <option value="vertical">Vertical 9:16 (Shorts / Reels / TikTok)</option>
+                      <option value="horizontal">Horizontal 16:9 (YouTube)</option>
+                      <option value="square">Square 1:1</option>
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="block text-sm font-medium text-gray-300 mb-2">AI</span>
+                    <select
+                      value={analyzer}
+                      onChange={(e) => setAnalyzer(e.target.value as Analyzer)}
+                      className="w-full px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-sm"
+                    >
+                      <option value="auto">Auto (Gemini if an API key is set)</option>
+                      <option value="local">Local only (no API, free)</option>
+                      <option value="gemini">Gemini</option>
+                    </select>
                   </label>
                 </div>
 
@@ -544,7 +670,7 @@ export default function Home() {
         )}
 
         <footer className="mt-12 flex justify-between text-xs text-gray-600 uppercase tracking-widest font-mono">
-          <span>Nue v1.1.0</span>
+          <span>Nue v2.0.0</span>
           <span>Status: Online</span>
         </footer>
       </div>

@@ -11,8 +11,8 @@ Nueは **Rust + Next.js** の2言語構成を目標にします。
 
 減らすもの:
 
-- Go: GatewayをNext.js API routeへ統合する
-- Python: BrainをRust CLI/worker側へ移す
+- Go: GatewayをNext.js API routeへ統合する（完了）
+- Python: BrainをRust CLI/worker側へ移す（完了）
 
 ## なぜ減らすべきか
 
@@ -185,5 +185,10 @@ Goを再導入する条件:
 - Gatewayを独立した高負荷サービスとして運用する必要が出る
 - 認証、署名URL、ストリーミング、レート制限をGatewayに集約したくなる
 - Next.js API routeでは扱いにくいネットワーク境界が出る
+- iOSアプリを出したあと、アセットパック配信・端末間同期・共有リンクのような小さく高並行なAPIサーバーが必要になる
+
+クライアント完結（iOSアプリ内）でGoを使う意味はほぼありません。`gomobile` でフレームワーク化はできますが、Speech / Vision / Foundation Models / AVFoundation はSwiftから呼ぶAPIなので、Goを挟んでもブリッジが増えるだけです。詳しくは [mobile-strategy.md](mobile-strategy.md)。
+
+Pythonについて: whisper.cpp（C++のCLI）で字幕生成をローカル化できたため、Whisper目的でのPython再導入は不要になりました。
 
 現時点の最適解は、Rust + Next.jsです。まずは言語数を減らし、動画品質と検証ループに集中します。
