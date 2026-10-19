@@ -47,7 +47,8 @@ graph LR
 | Service | Tech | Role |
 | --- | --- | --- |
 | **muscle** | Rust | CLI and worker: analyze (local or Gemini) → edit plan JSON → FFmpeg render |
-| **web** | Next.js | Upload, options, progress, preview, downloads |
+| **web** | Next.js | Upload, options, progress, preview, plan editing, downloads |
+| **ios** | Swift (SwiftUI + NueKit) | Analyze and render on iPhone/iPad, no server or API |
 
 Every analyzer writes the same [edit plan JSON](docs/edit-plan.schema.json). Edit it by hand and run `muscle render` to re-render; a future iOS client shares the same format ([docs/mobile-strategy.md](docs/mobile-strategy.md)).
 
@@ -109,8 +110,9 @@ Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `
 - [x] On-device subtitles (whisper.cpp) and SRT export
 - [x] Sound-effect and icon assets, horizontal/square output
 - [x] Timeline editing of the plan in the web UI (cuts, telops, subtitles, SE, zoom, icons) → re-render
-- [ ] iOS app (Apple Intelligence + Speech/Vision/SoundAnalysis + AVFoundation)
-- [ ] Auth & multi-user
+- [x] iOS app, fully on device: Speech subtitles, Apple Intelligence telops, AVFoundation render ([ios/](ios/README.md))
+
+Not planned for now (see [roi.md](docs/roi.md)): auth, multi-user, billing. They come in once Nue is run as a shared service.
 
 ## 🧭 Design docs
 

@@ -48,7 +48,8 @@ graph LR
 | サービス | 技術 | 役割 |
 | --- | --- | --- |
 | **muscle** | Rust | CLI兼ワーカー。解析（ローカル/Gemini）→ 編集指示書JSON → FFmpegで書き出し |
-| **web** | Next.js | アップロード、詳細オプション、進捗表示、プレビュー、ダウンロード |
+| **web** | Next.js | アップロード、詳細オプション、進捗表示、プレビュー、手修正、ダウンロード |
+| **ios** | Swift (SwiftUI + NueKit) | iPhone/iPad単体で解析→書き出し。APIもサーバーも不要 |
 
 すべての解析結果は [編集指示書JSON](docs/edit-plan.schema.json) に落ちます。手で直して `muscle render` すれば再書き出しでき、将来のiOS版とも同じ形式を共有します（[docs/mobile-strategy.md](docs/mobile-strategy.md)）。
 
@@ -122,8 +123,9 @@ muscle worker                                        data/raw を監視して自
 - [x] オンデバイス字幕生成（whisper.cpp）と SRT 書き出し
 - [x] 効果音・アイコンアセット、横/正方形書き出し
 - [x] Webでの編集指示書タイムライン手修正（カット・テロップ・字幕・効果音・ズーム・アイコン）→ 再書き出し
-- [ ] iOSアプリ（Apple Intelligence + Speech/Vision/SoundAnalysis + AVFoundation）
-- [ ] ユーザー認証 & マルチユーザー対応
+- [x] iOSアプリ（端末内で完結: Speech字幕 + Apple Intelligenceテロップ + AVFoundation書き出し、[ios/](ios/README.md)）
+
+今は作らないもの（[roi.md](docs/roi.md) の判断ライン参照）: ユーザー認証・マルチユーザー・課金。複数人で共有運用する段階になったら追加します。
 
 ## 🧭 設計ドキュメント
 
