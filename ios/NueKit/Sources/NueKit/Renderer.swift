@@ -190,7 +190,7 @@ public enum Renderer {
                 let oa = cutStart + a - range.start, ob = cutStart + b - range.start
                 switch effect.type {
                 case "zoom_in", "zoom_out", "punch_in":
-                    let zoom = ["zoom_in": 1.25, "zoom_out": 1.1, "punch_in": 1.12][effect.type] ?? 1
+                    let zoom: Double = effect.type == "zoom_in" ? 1.25 : effect.type == "punch_in" ? 1.12 : 1.1
                     events.append(.set(oa, base(index, zoom: zoom)))
                     events.append(.set(ob, base(index)))
                 case "push_in":
