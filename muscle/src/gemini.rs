@@ -14,6 +14,14 @@ use std::time::Duration;
 
 const INLINE_VIDEO_LIMIT_BYTES: u64 = 18 * 1024 * 1024;
 
+/// API root; overridable so tests can point at a local mock server.
+fn base_url() -> String {
+    env::var("NUE_GEMINI_BASE_URL")
+        .unwrap_or_else(|_| "https://generativelanguage.googleapis.com".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}
+
 pub fn api_key() -> Option<String> {
     env::var("GEMINI_API_KEY")
         .or_else(|_| env::var("GOOGLE_API_KEY"))
@@ -82,7 +90,7 @@ fn upload_file(
         .unwrap_or("video");
 
     let start_response = client
-        .post("https://generativelanguage.googleapis.com/upload/v1beta/files")
+        .post(format!("{}/upload/v1beta/files", base_url()))
         .header("x-goog-api-key", api_key)
         .header("X-Goog-Upload-Protocol", "resumable")
         .header("X-Goog-Upload-Command", "start")
@@ -127,10 +135,7 @@ fn upload_file(
 }
 
 fn wait_for_file_active(client: &Client, api_key: &str, file_name: &str) -> Result<()> {
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/{}",
-        file_name
-    );
+    let url = format!("{}/v1beta/{}", base_url(), file_name);
     for attempt in 1..=60 {
         let file: serde_json::Value = client
             .get(&url)
@@ -170,10 +175,7 @@ fn generate_from_parts(
         "contents": [{ "parts": parts }],
         "generationConfig": { "response_mime_type": "application/json" }
     });
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-        model
-    );
+    let url = format!("{}/v1beta/models/{}:generateContent", base_url(), model);
     let response: serde_json::Value = client
         .post(url)
         .header("x-goog-api-key", api_key)

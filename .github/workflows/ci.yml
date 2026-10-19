@@ -42,3 +42,29 @@ jobs:
       - run: npm run lint
       - run: npx tsc --noEmit
       - run: npm run build
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build images
+        run: WHISPER_MODEL=tiny docker compose build
+      - name: Render a clip inside the worker image (with subtitles)
+        run: |
+          mkdir -p smoke
+          cp -r data/se data/icons data/bgm smoke/
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          ffmpeg -y -loglevel error -f lavfi -i testsrc2=s=640x360:r=30:d=6 \
+            -f lavfi -i sine=f=300:d=6 -c:v libx264 -preset ultrafast -c:a aac smoke/clip.mp4
+          docker run --rm -v "$PWD/smoke:/app/data" nue-muscle muscle run /app/data/clip.mp4
+          test -s smoke/output/clip_edited.mp4
+          test -s smoke/output/clip_thumb.jpg
+          grep -q '"status": "completed"' smoke/jobs/clip.json
+      - name: Web container serves the UI and API
+        run: |
+          docker compose up -d web
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/ >/dev/null && break; sleep 2; done
+          curl -sf http://localhost:3000/ | grep -q "Nue"
+          curl -sf http://localhost:3000/api/assets | grep -q '"impact"'
+          docker compose down
