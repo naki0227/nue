@@ -114,6 +114,6 @@ RemotionはReactで動画を組み立てるツールで、書き出しはNode上
 ## 推奨ロードマップ
 
 1. **完了**: Rust + Next.js の2サービス化、APIなしローカル解析、オンデバイス字幕、SE/アイコンアセット、横/縦/正方形書き出し、Webからの手動指示
-2. Web上で編集指示書をタイムライン表示して手修正 → `muscle render` で再書き出し（ROIの「手修正数」「再レンダリング回数」を下げる本命）
+2. **完了**: Web上で編集指示書をタイムライン表示して手修正 → 再書き出し
 3. iOS MVP (SwiftUI): 解析 = Speech + SoundAnalysis + Vision、文言 = Foundation Models、出力 = 同じ編集指示書JSON → AVFoundationで書き出し
 4. 必要になったらGoで同期・アセット配信サーバー

@@ -380,23 +380,25 @@ fn run_raw_job(input_path: &Path) -> Result<()> {
 }
 
 fn ensure_dirs() -> Result<()> {
-    for dir in ["raw", "json", "output", "jobs", "temp"] {
+    for dir in ["raw", "json", "edits", "output", "jobs", "temp"] {
         fs::create_dir_all(data_path(dir))?;
     }
     Ok(())
 }
 
-fn watch_dir(dir: &Path, mut handle: impl FnMut(&Path)) -> Result<()> {
+fn watch_dirs(dirs: &[PathBuf], mut handle: impl FnMut(&Path)) -> Result<()> {
     let (tx, rx) = channel();
     let config = Config::default().with_poll_interval(Duration::from_secs(2));
     let mut watcher: RecommendedWatcher = Watcher::new(tx, config)?;
-    watcher.watch(dir, RecursiveMode::NonRecursive)?;
-    log_json(
-        "INFO",
-        "Watching directory",
-        Some("watch_start"),
-        dir.to_str(),
-    );
+    for dir in dirs {
+        watcher.watch(dir, RecursiveMode::NonRecursive)?;
+        log_json(
+            "INFO",
+            "Watching directory",
+            Some("watch_start"),
+            dir.to_str(),
+        );
+    }
 
     for res in rx {
         match res {
@@ -435,18 +437,71 @@ fn watch_raw_jobs() -> Result<()> {
     for path in pending {
         run_raw_job(&path)?;
     }
-    watch_dir(&raw_dir, |path| {
+    let edits_dir = data_path("edits");
+    let mut edits: Vec<PathBuf> = fs::read_dir(&edits_dir)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| is_edit_request(path))
+        .collect();
+    edits.sort();
+    for path in edits {
+        run_edit_request(&path);
+    }
+    watch_dirs(&[raw_dir, edits_dir], |path| {
         if is_video_file(path) {
             std::thread::sleep(Duration::from_secs(1));
             let _ = run_raw_job(path);
+        } else if is_edit_request(path) {
+            run_edit_request(path);
         }
     })
+}
+
+/// `data/edits/<job_id>.json`: a hand-edited plan from the web UI to re-render.
+fn is_edit_request(path: &Path) -> bool {
+    path.parent() == Some(data_path("edits").as_path())
+        && path.extension().is_some_and(|ext| ext == "json")
+        && !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(".")
+            .starts_with('.')
+}
+
+fn run_edit_request(path: &Path) {
+    let Ok(content) = fs::read_to_string(path) else {
+        return; // Already handled (the file is removed once picked up).
+    };
+    let _ = fs::remove_file(path);
+    let job_id = file_stem(path);
+    let result = serde_json::from_str::<EditPlan>(&content)
+        .context("Invalid edited plan")
+        .and_then(|mut plan| {
+            plan.job_id = Some(job_id.clone());
+            let plan_path = data_path("json").join(format!("{}.json", job_id));
+            fs::write(&plan_path, serde_json::to_string_pretty(&plan)?)?;
+            log_json(
+                "INFO",
+                "Re-rendering edited plan",
+                Some("edit_render"),
+                plan_path.to_str(),
+            );
+            render::render_plan(&plan)
+        });
+    if let Err(error) = result {
+        log_json(
+            "ERROR",
+            &format!("Edit failed: {:#}", error),
+            Some("edit_failed"),
+            path.to_str(),
+        );
+        let _ = set_status(&job_id, "failed", &format!("{:#}", error), 100);
+    }
 }
 
 fn watch_json_jobs() -> Result<()> {
     ensure_dirs()?;
     let mut rendered = std::collections::HashSet::new();
-    watch_dir(&data_path("json"), |path| {
+    watch_dirs(&[data_path("json")], |path| {
         if path.extension().is_some_and(|ext| ext == "json") && rendered.insert(path.to_path_buf())
         {
             std::thread::sleep(Duration::from_secs(1));

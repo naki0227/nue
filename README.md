@@ -62,7 +62,7 @@ cp .env.example .env        # set GEMINI_API_KEY only if you want Gemini
 docker compose up -d --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and drop a video. The finished video, thumbnail, subtitles (.srt) and edit plan can be downloaded from the page and are saved in `data/output/`.
+Open [http://localhost:3000](http://localhost:3000) and drop a video. After it finishes, click **Edit** to adjust cuts, telops, subtitles, sound effects, zoom and icons, then **Re-render**. The finished video, thumbnail, subtitles (.srt) and edit plan can be downloaded from the page and are saved in `data/output/`.
 
 The image bundles the `base` whisper model. For better accuracy set `WHISPER_MODEL=small` (or `medium`) in `.env` and rebuild; `none` skips subtitles.
 
@@ -108,7 +108,7 @@ Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `
 - [x] API-free local analysis (silence, loudness peaks, scene changes)
 - [x] On-device subtitles (whisper.cpp) and SRT export
 - [x] Sound-effect and icon assets, horizontal/square output
-- [ ] Timeline editing of the plan in the web UI → re-render
+- [x] Timeline editing of the plan in the web UI (cuts, telops, subtitles, SE, zoom, icons) → re-render
 - [ ] iOS app (Apple Intelligence + Speech/Vision/SoundAnalysis + AVFoundation)
 - [ ] Auth & multi-user
 

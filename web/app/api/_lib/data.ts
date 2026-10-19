@@ -32,7 +32,7 @@ export function dataDir() {
   return path.join(process.cwd(), "data");
 }
 
-export function dataPath(name: "raw" | "jobs" | "output") {
+export function dataPath(name: "raw" | "jobs" | "output" | "json" | "edits" | "se" | "icons") {
   return path.join(dataDir(), name);
 }
 

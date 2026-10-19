@@ -116,5 +116,5 @@
 
 ## 次のステップ
 
-- Webで編集指示書をタイムライン表示して手修正 → `muscle render` で再書き出し
+- (完了) Webで編集指示書をタイムライン表示して手修正 → ワーカーが `data/edits/<job>.json` を拾って再書き出し
 - iOSクライアント（[mobile-strategy.md](mobile-strategy.md)）

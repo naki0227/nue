@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Upload, CheckCircle, Loader2, Play, ChevronDown, ChevronUp, Plus, X, Settings, Download } from "lucide-react";
+import PlanEditor from "./PlanEditor";
+import { Upload, CheckCircle, Loader2, Play, ChevronDown, ChevronUp, Plus, X, Settings, Download, Pencil } from "lucide-react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 const uploadUrl = API_BASE_URL ? `${API_BASE_URL}/upload` : "/api/upload";
@@ -45,6 +46,7 @@ interface JobStatus {
   thumbnail_url?: string;
   subtitle_url?: string;
   plan_url?: string;
+  updated_at?: string | number;
 }
 
 interface OutputLinks {
@@ -64,6 +66,8 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [jobMessage, setJobMessage] = useState("");
   const [output, setOutput] = useState<OutputLinks | null>(null);
+  const [jobId, setJobId] = useState("");
+  const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Advanced options state
@@ -156,6 +160,7 @@ export default function Home() {
           setStatus("processing");
           const response = JSON.parse(xhr.responseText) as { job_id?: string };
           if (response.job_id) {
+            setJobId(response.job_id);
             pollJob(response.job_id);
           }
         } else {
@@ -187,11 +192,14 @@ export default function Home() {
       setProgress(job.progress ?? 0);
 
       if (job.status === "completed" && job.output_url) {
+        // Re-renders overwrite the same file names, so bust the browser cache.
+        const version = `?v=${job.updated_at ?? Date.now()}`;
+        const link = (url?: string) => (url ? `${resolveOutputUrl(url)}${version}` : undefined);
         setOutput({
-          video: resolveOutputUrl(job.output_url),
-          thumbnail: job.thumbnail_url ? resolveOutputUrl(job.thumbnail_url) : undefined,
-          subtitles: job.subtitle_url ? resolveOutputUrl(job.subtitle_url) : undefined,
-          plan: job.plan_url ? resolveOutputUrl(job.plan_url) : undefined,
+          video: link(job.output_url)!,
+          thumbnail: link(job.thumbnail_url),
+          subtitles: link(job.subtitle_url),
+          plan: link(job.plan_url),
         });
         setStatus("done");
         return;
@@ -357,13 +365,37 @@ export default function Home() {
                     <Play className="w-4 h-4 inline mr-2" fill="currentColor" /> Watch
                   </a>
                 )}
+                {output?.plan && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditing(!editing); }}
+                    className="px-6 py-2 rounded-full bg-white/10 text-white font-semibold hover:bg-white/20 transition flex items-center gap-2"
+                  >
+                    <Pencil className="w-4 h-4" /> {editing ? "Close editor" : "Edit"}
+                  </button>
+                )}
                 <button
-                  onClick={(e) => { e.stopPropagation(); setStatus("idle"); setFile(null); setOutput(null); setProgress(0); }}
+                  onClick={(e) => { e.stopPropagation(); setStatus("idle"); setFile(null); setOutput(null); setProgress(0); setEditing(false); }}
                   className="px-6 py-2 rounded-full bg-white/10 text-white font-semibold hover:bg-white/20 transition"
                 >
                   New Upload
                 </button>
               </div>
+
+              {editing && output?.plan && jobId && (
+                <div className="w-full pt-6 border-t border-white/10">
+                  <PlanEditor
+                    jobId={jobId}
+                    planUrl={output.plan}
+                    onQueued={() => {
+                      setEditing(false);
+                      setStatus("processing");
+                      setProgress(65);
+                      setJobMessage("Re-render queued.");
+                      window.setTimeout(() => pollJob(jobId), 1500);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           )}
 

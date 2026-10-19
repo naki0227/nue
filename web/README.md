@@ -1,6 +1,6 @@
 # Nue web
 
-Next.js UI and API routes for Nue: upload (`/api/upload`), job status (`/api/jobs/:id`) and output delivery with HTTP Range support (`/api/output/:file`). Rendering is done by the Rust worker in `../muscle`, which watches the shared `data/` directory.
+Next.js UI and API routes for Nue: upload (`/api/upload`), job status (`/api/jobs/:id`) and output delivery with HTTP Range support (`/api/output/:file`), plan editing (`GET/PUT /api/jobs/:id/plan`, queued to `data/edits/` for the worker) and asset names (`/api/assets`). Rendering is done by the Rust worker in `../muscle`, which watches the shared `data/` directory.
 
 ```bash
 npm ci

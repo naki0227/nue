@@ -64,7 +64,7 @@ docker compose up -d --build
 ```
 
 [http://localhost:3000](http://localhost:3000) を開いて動画をドロップすると、自動で編集が始まります。
-完成した動画・サムネイル・字幕(.srt)・編集指示書は画面からダウンロードでき、`data/output/` にも保存されます。
+完成後は「Edit」でカット・テロップ・字幕・効果音・ズーム・アイコンを直して「Re-render」で再書き出しできます。動画・サムネイル・字幕(.srt)・編集指示書は画面からダウンロードでき、`data/output/` にも保存されます。
 
 字幕用のwhisperモデルは既定で `base` を同梱します。日本語の精度を上げたい場合は `.env` に `WHISPER_MODEL=small`（または `medium`）を設定して再ビルドしてください。`none` にすると字幕生成をスキップします。
 
@@ -121,7 +121,7 @@ muscle worker                                        data/raw を監視して自
 - [x] APIキー不要のローカル解析（無音カット・音量ピーク・シーン検出）
 - [x] オンデバイス字幕生成（whisper.cpp）と SRT 書き出し
 - [x] 効果音・アイコンアセット、横/正方形書き出し
-- [ ] Webでの編集指示書タイムライン手修正 → 再書き出し
+- [x] Webでの編集指示書タイムライン手修正（カット・テロップ・字幕・効果音・ズーム・アイコン）→ 再書き出し
 - [ ] iOSアプリ（Apple Intelligence + Speech/Vision/SoundAnalysis + AVFoundation）
 - [ ] ユーザー認証 & マルチユーザー対応
 
