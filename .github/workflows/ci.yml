@@ -90,7 +90,9 @@ jobs:
           UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k, v in sorted(d.items(), reverse=True) if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
           echo "Simulator $UDID"
           xcrun simctl boot "$UDID"
-          (cd ios/NueKit && xcodebuild test -scheme NueKit -destination "id=$UDID" | tail -25; exit ${PIPESTATUS[0]})
+          # Rendering tests run on the macOS host above: simulators on CI VMs have no
+          # H.264 encoder (VideoToolbox -12900), so only the planner tests run here.
+          (cd ios/NueKit && xcodebuild test -scheme NueKit -destination "id=$UDID" -skip-testing:NueKitTests/RendererTests | tail -25; exit ${PIPESTATUS[0]})
           cd ios
           xcodebuild -project Nue.xcodeproj -scheme Nue -destination "id=$UDID" -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -3
           xcrun simctl install "$UDID" build/Build/Products/Debug-iphonesimulator/Nue.app
