@@ -89,6 +89,25 @@ final class RendererTests: XCTestCase {
         XCTAssertLessThan(abs(Int(mirrored.r) - Int(mirrored.g)), 30, "overlay appears flipped: \(mirrored)")
     }
 
+    func testPipelineAnalyzesAndRendersSilentClip() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("nuekit-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("silent.mp4")
+        try await makeClip(seconds: 3, size: CGSize(width: 360, height: 640), to: source)
+
+        var options = AnalyzeOptions()
+        options.format = .square
+        options.bgm = false
+        let plan = try await NuePipeline.analyze(source: source, options: options, workDirectory: dir)
+        XCTAssertEqual(plan.format, "square")
+        XCTAssertEqual(plan.outputDuration, 3, accuracy: 0.1)
+        let out = try await Renderer.render(plan: plan, source: source, assets: AssetLibrary(soundDirectory: nil, iconDirectory: nil, bgm: nil), output: dir.appendingPathComponent("out.mp4"))
+        let track = try await AVURLAsset(url: out.video).loadTracks(withMediaType: .video).first!
+        let size = try await track.load(.naturalSize)
+        XCTAssertEqual(size, CGSize(width: 1080, height: 1080))
+    }
+
     func testFillTransformCentersAndFocuses() {
         let render = CGSize(width: 1080, height: 1920)
         let t = Renderer.fillTransform(naturalSize: CGSize(width: 1920, height: 1080), preferred: .identity, renderSize: render, focus: 0.5)
