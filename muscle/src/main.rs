@@ -217,10 +217,9 @@ fn analyze_video(
     if raw_path.canonicalize().ok().as_ref() != Some(&input_path) {
         fs::copy(&input_path, &raw_path)
             .with_context(|| format!("Failed to copy video to {}", raw_path.display()))?;
-        for sidecar in [input_path.with_extension("srt")] {
-            if sidecar.exists() {
-                let _ = fs::copy(&sidecar, raw_path.with_extension("srt"));
-            }
+        let sidecar = input_path.with_extension("srt");
+        if sidecar.exists() {
+            let _ = fs::copy(&sidecar, raw_path.with_extension("srt"));
         }
     }
 

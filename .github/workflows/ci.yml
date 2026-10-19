@@ -12,7 +12,7 @@ jobs:
       run:
         working-directory: muscle
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install ffmpeg and CJK fonts
         run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
       - uses: dtolnay/rust-toolchain@stable
@@ -32,8 +32,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
