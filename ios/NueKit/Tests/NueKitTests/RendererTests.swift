@@ -73,7 +73,8 @@ final class RendererTests: XCTestCase {
         let track = try await rendered.loadTracks(withMediaType: .video).first!
         let size = try await track.load(.naturalSize)
         XCTAssertEqual(size, CGSize(width: 1080, height: 1920))
-        XCTAssertFalse(try await rendered.loadTracks(withMediaType: .audio).isEmpty, "BGM/SE should produce audio")
+        let audioTracks = try await rendered.loadTracks(withMediaType: .audio)
+        XCTAssertFalse(audioTracks.isEmpty, "BGM/SE should produce audio")
 
         let generator = AVAssetImageGenerator(asset: rendered)
         generator.requestedTimeToleranceBefore = .zero
