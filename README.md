@@ -65,7 +65,16 @@ docker compose up -d --build
 
 Open [http://localhost:3000](http://localhost:3000) and drop a video. After it finishes, click **Edit** to adjust cuts, telops, subtitles, sound effects, zoom and icons, then **Re-render**. The finished video, thumbnail, subtitles (.srt) and edit plan can be downloaded from the page and are saved in `data/output/`.
 
-The image bundles the `base` whisper model. For better accuracy set `WHISPER_MODEL=small` (or `medium`) in `.env` and rebuild; `none` skips subtitles.
+The image bundles the `small` whisper model. Set `WHISPER_MODEL=medium` in `.env` and rebuild for higher accuracy (`base` for a lighter image); `none` skips subtitles.
+
+## 🎞 Output quality
+
+- Keeps the source frame rate (24-60 fps)
+- Tone maps iPhone HDR (HLG / Dolby Vision) to SDR BT.709
+- Lanczos scaling; zooms are cut from the full-resolution source
+- H.264 High, CRF 18, BT.709 tags; lossless PCM between stages, one final AAC 256k encode
+- Voice cleanup (rumble cut, light denoise, compression) and micro-fades at every cut
+- Two-pass loudness normalization to -14 LUFS / -1 dBTP
 
 ## 💻 CLI
 
@@ -94,7 +103,9 @@ Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Enable Gemini |
 | `NUE_WHISPER_MODEL` / `NUE_WHISPER_BIN` / `NUE_LANGUAGE` | Subtitles (language defaults to `auto`, e.g. `ja`) |
 | `NUE_FONT` | Font for telops and subtitles |
-| `NUE_X264_PRESET` | Encoder speed (default `veryfast`) |
+| `NUE_X264_PRESET` / `NUE_CRF` | Quality vs. speed (default `medium` / `18`; `veryfast` for speed, `slow` or CRF `16` for even higher quality) |
+| `NUE_LOUDNESS` | Output loudness (default `-14` LUFS, the YouTube/TikTok/Instagram norm) |
+| `NUE_SHARPEN` | `1` adds mild sharpening when reframing enlarges the picture |
 
 ## 🎨 Adding assets
 

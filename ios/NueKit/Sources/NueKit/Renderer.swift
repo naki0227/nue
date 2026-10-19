@@ -72,7 +72,10 @@ public enum Renderer {
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        // Keep the source frame rate (24-60 fps) instead of forcing 30.
+        let sourceFPS = Double(try await sourceVideo.load(.nominalFrameRate))
+        let fps = sourceFPS.isFinite && sourceFPS > 1 ? min(max(sourceFPS.rounded(), 24), 60) : 30
+        videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
         videoComposition.instructions = [instruction]
 
         let (parent, videoLayer) = overlayLayers(plan: plan, ranges: ranges, renderSize: renderSize, assets: assets)

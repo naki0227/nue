@@ -6,7 +6,7 @@
 
 use crate::assets;
 use crate::jobs::{data_path, log_json, update_job_status, JobUrls};
-use crate::media;
+use crate::media::{self, MediaInfo};
 use crate::plan::{parse_time, source_to_output, CaptionStyle, EditPlan};
 use crate::subtitles;
 use anyhow::{bail, Context, Result};
@@ -16,8 +16,113 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const FPS: u32 = 30;
 const MAX_SOUND_EFFECTS: usize = 48;
+/// Short fades at every cut boundary so jump cuts never click.
+const CUT_FADE: f64 = 0.012;
+
+/// Output frame rate: the source rate snapped to a standard rate, at most 60.
+pub fn output_fps(source: f64) -> &'static str {
+    const RATES: [(f64, &str); 8] = [
+        (23.976, "24000/1001"),
+        (24.0, "24"),
+        (25.0, "25"),
+        (29.97, "30000/1001"),
+        (30.0, "30"),
+        (50.0, "50"),
+        (59.94, "60000/1001"),
+        (60.0, "60"),
+    ];
+    if source.is_nan() || source <= 1.0 {
+        return "30";
+    }
+    let target = source.min(60.0);
+    RATES
+        .iter()
+        .min_by(|a, b| (a.0 - target).abs().total_cmp(&(b.0 - target).abs()))
+        .map(|r| r.1)
+        .unwrap_or("30")
+}
+
+/// How the source is turned into output frames, shared by every segment.
+struct VideoSettings {
+    frame: Frame,
+    fps: &'static str,
+    /// Filters applied to the raw source before reframing (HDR tone mapping).
+    source_filter: String,
+    /// Mild sharpening when reframing enlarges the picture noticeably (opt-in:
+    /// it looks crisper but strays from the source).
+    sharpen: bool,
+}
+
+impl VideoSettings {
+    fn new(info: &MediaInfo, frame: Frame) -> VideoSettings {
+        // iPhone footage is usually HLG/Dolby Vision. Tone map to SDR BT.709 so it
+        // does not come out washed out on players that assume SDR.
+        let source_filter = if info.is_hdr() {
+            format!(
+                "zscale=tin={}:min=bt2020nc:pin=bt2020:t=linear:npl=100,format=gbrpf32le,\
+                 zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,",
+                info.color_transfer
+            )
+        } else {
+            String::new()
+        };
+        let (sw, sh) = info.display_size();
+        let enlargement = if sw > 0 && sh > 0 {
+            (frame.width as f64 / sw as f64).max(frame.height as f64 / sh as f64)
+        } else {
+            1.0
+        };
+        VideoSettings {
+            frame,
+            fps: output_fps(info.fps),
+            source_filter,
+            sharpen: enlargement > 1.15 && env::var("NUE_SHARPEN").is_ok_and(|v| v == "1"),
+        }
+    }
+
+    /// Scales and crops `[input]` to the frame at `zoom`, focused horizontally.
+    fn reframe(&self, input: &str, output: &str, x_expr: &str, zoom: f64) -> String {
+        let (w, h) = (self.frame.width, self.frame.height);
+        let even = |v: f64| ((v / 2.0).round() as u32) * 2;
+        let (zw, zh) = (even(w as f64 * zoom), even(h as f64 * zoom));
+        format!(
+            "[{input}]scale={zw}:{zh}:force_original_aspect_ratio=increase:flags=lanczos,\
+             crop={w}:{h}:x={}:y=(ih-oh)/2{}[{output}]",
+            quote(x_expr),
+            if self.sharpen { ",cas=0.35" } else { "" }
+        )
+    }
+}
+
+/// Encoder settings: visually lossless H.264 tagged as BT.709.
+fn video_codec_args() -> Vec<String> {
+    let preset = env::var("NUE_X264_PRESET").unwrap_or_else(|_| "medium".to_string());
+    let crf = env::var("NUE_CRF").unwrap_or_else(|_| "18".to_string());
+    [
+        "-c:v",
+        "libx264",
+        "-preset",
+        &preset,
+        "-crf",
+        &crf,
+        "-profile:v",
+        "high",
+        "-pix_fmt",
+        "yuv420p",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-color_range",
+        "tv",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Frame {
@@ -259,13 +364,15 @@ fn render_segment(
     segment: &Segment,
     video_path: &Path,
     has_audio: bool,
-    frame: Frame,
+    video: &VideoSettings,
     work_dir: &Path,
 ) -> Result<PathBuf> {
     let (cut_start, cut_end) = segment.range;
     let duration = cut_end - cut_start;
-    let segment_path = work_dir.join(format!("seg_{:04}.mp4", segment.index));
-    let (w, h) = (frame.width, frame.height);
+    // Matroska with PCM audio: the only lossy audio encode happens once, at the end.
+    let segment_path = work_dir.join(format!("seg_{:04}.mkv", segment.index));
+    let frame = video.frame;
+    let w = frame.width;
 
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-y", "-hide_banner", "-loglevel", "error"])
@@ -296,29 +403,49 @@ fn render_segment(
             );
         }
     }
-    let mut graph = vec![format!(
-        "[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}:x={}:y=(ih-oh)/2,setsar=1,fps={FPS}[v0]",
-        quote(&x_expr)
-    )];
+    // Zoomed views are cut from the full-resolution source, not by enlarging the
+    // already-reframed picture, so punch-ins stay sharp.
+    let zooms: Vec<(f64, f64, f64)> = plan
+        .visual_effects
+        .iter()
+        .filter_map(|effect| {
+            let zoom = match effect.effect_type.as_str() {
+                "zoom_in" => 1.25,
+                "zoom_out" => 1.1,
+                _ => return None,
+            };
+            local_window(&effect.start, effect.end.as_deref(), 1.5, segment.range)
+                .map(|(a, b)| (zoom, a, b))
+        })
+        .collect();
+    let branches = (0..=zooms.len())
+        .map(|i| format!("[s{i}]"))
+        .collect::<String>();
+    let mut graph = vec![
+        format!(
+            "[0:v]{}fps={},setsar=1,split={}{branches}",
+            video.source_filter,
+            video.fps,
+            zooms.len() + 1
+        ),
+        video.reframe("s0", "v0", &x_expr, 1.0),
+    ];
     let mut label = 0;
-
-    for effect in &plan.visual_effects {
-        let zoom = match effect.effect_type.as_str() {
-            "zoom_in" => 1.25,
-            "zoom_out" => 1.1,
-            _ => continue,
-        };
-        if let Some((a, b)) = local_window(&effect.start, effect.end.as_deref(), 1.5, segment.range)
-        {
-            graph.push(format!(
-                "[v{l}]split[v{l}a][v{l}b];[v{l}b]crop=iw/{zoom}:ih/{zoom},scale={w}:{h},setsar=1[z{l}];\
-                 [v{l}a][z{l}]overlay=enable={}[v{n}]",
-                quote(&format!("between(t,{a:.3},{b:.3})")),
-                l = label,
-                n = label + 1,
-            ));
-            label += 1;
-        }
+    let focus_expr = format!("(iw-ow)*{:.3}", segment.focus);
+    for (i, (zoom, a, b)) in zooms.iter().enumerate() {
+        graph.push(video.reframe(
+            &format!("s{}", i + 1),
+            &format!("z{label}"),
+            &focus_expr,
+            *zoom,
+        ));
+        graph.push(format!(
+            "[v{l}][z{l}]overlay=enable={}[v{n}]",
+            quote(&format!("between(t,{a:.3},{b:.3})")),
+            l = label,
+            n = label + 1,
+        ));
+        label += 1;
     }
 
     for overlay in &plan.overlays {
@@ -335,7 +462,7 @@ fn render_segment(
             );
             continue;
         };
-        cmd.args(["-loop", "1", "-framerate", &FPS.to_string(), "-t"])
+        cmd.args(["-loop", "1", "-framerate", video.fps, "-t"])
             .arg(format!("{:.3}", duration))
             .arg("-i")
             .arg(icon);
@@ -388,7 +515,11 @@ fn render_segment(
     }
 
     let audio_map = if has_audio {
-        graph.push("[0:a]aresample=48000,aformat=channel_layouts=stereo,apad[aout]".to_string());
+        let fade_out = (duration - CUT_FADE).max(0.0);
+        graph.push(format!(
+            "[0:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{duration:.3},\
+             afade=t=in:d={CUT_FADE},afade=t=out:st={fade_out:.3}:d={CUT_FADE}[aout]"
+        ));
         "[aout]".to_string()
     } else {
         cmd.args(["-f", "lavfi", "-t"])
@@ -397,16 +528,13 @@ fn render_segment(
         format!("{}:a", next_input)
     };
 
-    let preset = env::var("NUE_X264_PRESET").unwrap_or_else(|_| "veryfast".to_string());
     let output = cmd
         .arg("-filter_complex")
         .arg(graph.join(";"))
         .args(["-map", "[vout]", "-map", &audio_map])
-        .args([
-            "-c:v", "libx264", "-preset", &preset, "-crf", "20", "-pix_fmt", "yuv420p",
-        ])
-        .args(["-r", &FPS.to_string()])
-        .args(["-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2"])
+        .args(video_codec_args())
+        .args(["-r", video.fps])
+        .args(["-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"])
         .arg("-t")
         .arg(format!("{:.3}", duration))
         .arg(&segment_path)
@@ -448,6 +576,9 @@ fn mix_and_concat(
         .map(|(s, e)| e - s)
         .sum::<f64>()
         .min(plan.output_duration());
+
+    // 1) Mix voice, ducked BGM and sound effects into a lossless WAV.
+    let mixed = work_dir.join("mix.wav");
     let mut cmd = Command::new("ffmpeg");
     cmd.args([
         "-y",
@@ -496,13 +627,20 @@ fn mix_and_concat(
     let mut filters = Vec::new();
     let mut mix_inputs = vec!["[voice]".to_string()];
     let mut next_input = 1;
+    // Clean up speech: rumble cut, gentle denoise, and compression for even levels.
+    let voice_chain = if has_audio {
+        "highpass=f=80,afftdn=nf=-25:tn=1,\
+         acompressor=threshold=0.089:ratio=3:attack=15:release=250:makeup=1.5"
+    } else {
+        "anull"
+    };
 
     if let Some(bgm) = &bgm {
         log_json("INFO", "Mixing BGM", Some("bgm"), bgm.to_str());
         cmd.args(["-stream_loop", "-1", "-i"]).arg(bgm);
         if has_audio {
             // Duck the music under speech.
-            filters.push("[0:a]asplit=2[voice][sc]".to_string());
+            filters.push(format!("[0:a]{voice_chain},asplit=2[voice][sc]"));
             filters.push(format!(
                 "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.25[bgmraw];\
                  [bgmraw][sc]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[bgm]"
@@ -516,7 +654,7 @@ fn mix_and_concat(
         mix_inputs.push("[bgm]".to_string());
         next_input += 1;
     } else {
-        filters.push("[0:a]anull[voice]".to_string());
+        filters.push(format!("[0:a]{voice_chain}[voice]"));
     }
 
     for (at, path) in &sound_effects {
@@ -531,18 +669,56 @@ fn mix_and_concat(
 
     let fade_start = (total - 1.5).max(0.0);
     filters.push(format!(
-        "{}amix=inputs={}:duration=first:dropout_transition=0:normalize=0,alimiter=limit=0.95,\
+        "{}amix=inputs={}:duration=first:dropout_transition=0:normalize=0,\
          afade=t=out:st={fade_start:.3}:d=1.5[aout]",
         mix_inputs.join(""),
         mix_inputs.len()
     ));
-
     let output = cmd
         .arg("-filter_complex")
         .arg(filters.join(";"))
-        .args(["-map", "0:v", "-map", "[aout]", "-c:v", "copy"])
-        .args(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
-        .arg("-t")
+        .args(["-map", "[aout]", "-c:a", "pcm_f32le", "-ar", "48000", "-t"])
+        .arg(format!("{:.3}", total))
+        .arg(&mixed)
+        .output()
+        .context("Failed to run ffmpeg")?;
+    if !output.status.success() {
+        bail!(
+            "Audio mix failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // 2) Measure loudness, 3) normalize to the platform target while muxing.
+    let loudnorm = loudness_filter(&mixed);
+    let output = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+        ])
+        .arg(&concat_file)
+        .arg("-i")
+        .arg(&mixed)
+        .args(["-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af"])
+        .arg(format!("{loudnorm}aresample=48000"))
+        .args([
+            "-c:a",
+            "aac",
+            "-b:a",
+            "256k",
+            "-ac",
+            "2",
+            "-movflags",
+            "+faststart",
+            "-t",
+        ])
         .arg(format!("{:.3}", total))
         .arg(output_path)
         .output()
@@ -556,20 +732,85 @@ fn mix_and_concat(
     Ok(())
 }
 
+/// Integrated loudness target in LUFS (YouTube, TikTok and Instagram use about -14).
+fn loudness_target() -> f64 {
+    env::var("NUE_LOUDNESS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(-14.0)
+}
+
+/// Second-pass `loudnorm` filter built from a first-pass measurement, or an
+/// empty string for silent audio (nothing to normalize).
+fn loudness_filter(audio: &Path) -> String {
+    let target = loudness_target();
+    let measured = Command::new("ffmpeg")
+        .args(["-hide_banner", "-nostats", "-i"])
+        .arg(audio)
+        .args(["-af"])
+        .arg(format!(
+            "loudnorm=I={target}:TP=-1:LRA=11:print_format=json"
+        ))
+        .args(["-f", "null", "-"])
+        .output()
+        .ok()
+        .and_then(|out| parse_loudnorm(&String::from_utf8_lossy(&out.stderr)));
+    match measured {
+        Some(m) => format!(
+            "loudnorm=I={target}:TP=-1:LRA=11:measured_I={}:measured_TP={}:measured_LRA={}:\
+             measured_thresh={}:offset={}:linear=true,",
+            m.input_i, m.input_tp, m.input_lra, m.input_thresh, m.target_offset
+        ),
+        None => String::new(),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct LoudnessStats {
+    input_i: f64,
+    input_tp: f64,
+    input_lra: f64,
+    input_thresh: f64,
+    target_offset: f64,
+}
+
+/// Reads the JSON block `loudnorm` prints; `None` for silence (-inf) or garbage.
+fn parse_loudnorm(log: &str) -> Option<LoudnessStats> {
+    let json: serde_json::Value =
+        serde_json::from_str(&log[log.rfind('{')?..=log.rfind('}')?]).ok()?;
+    let get = |key: &str| {
+        json[key]
+            .as_str()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+    };
+    let stats = LoudnessStats {
+        input_i: get("input_i")?,
+        input_tp: get("input_tp")?,
+        input_lra: get("input_lra")?,
+        input_thresh: get("input_thresh")?,
+        target_offset: get("target_offset")?,
+    };
+    (stats.input_i > -70.0).then_some(stats)
+}
+
 fn render_thumbnail(
     plan: &EditPlan,
     video_path: &Path,
-    frame: Frame,
+    video: &VideoSettings,
     work_dir: &Path,
     out: &Path,
 ) -> Result<()> {
+    let frame = video.frame;
     let Some(thumb) = &plan.thumbnail else {
         bail!("No thumbnail in plan");
     };
     let at = parse_time(&thumb.timestamp).unwrap_or(0.0);
     let (w, h) = (frame.width, frame.height);
     let mut filter = format!(
-        "scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},eq=saturation=1.4:contrast=1.15"
+        "{}scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},\
+         eq=saturation=1.25:contrast=1.08",
+        video.source_filter
     );
     if !thumb.text.trim().is_empty() {
         let font_size = frame.font(140.0);
@@ -644,6 +885,7 @@ fn render_plan_inner(plan: &EditPlan, stem: &str, job_id: &str) -> Result<Render
 
     let info = media::probe(&video_path)?;
     let frame = Frame::for_format(plan.format.as_deref());
+    let video = VideoSettings::new(&info, frame);
     let ranges: Vec<(f64, f64)> = plan
         .cut_ranges()
         .into_iter()
@@ -698,7 +940,7 @@ fn render_plan_inner(plan: &EditPlan, stem: &str, job_id: &str) -> Result<Render
             &segment,
             &video_path,
             info.has_audio,
-            frame,
+            &video,
             &work_dir,
         )?);
     }
@@ -717,7 +959,7 @@ fn render_plan_inner(plan: &EditPlan, stem: &str, job_id: &str) -> Result<Render
 
     let thumb_name = format!("{}_thumb.jpg", stem);
     let thumb_path = output_dir.join(&thumb_name);
-    let thumbnail = match render_thumbnail(plan, &video_path, frame, &work_dir, &thumb_path) {
+    let thumbnail = match render_thumbnail(plan, &video_path, &video, &work_dir, &thumb_path) {
         Ok(()) => Some(thumb_path),
         Err(error) => {
             log_json(
@@ -810,6 +1052,26 @@ mod tests {
     #[test]
     fn quotes_filter_values() {
         assert_eq!(quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn snaps_output_frame_rates() {
+        assert_eq!(output_fps(59.94), "60000/1001");
+        assert_eq!(output_fps(60.0), "60");
+        assert_eq!(output_fps(120.0), "60");
+        assert_eq!(output_fps(29.97), "30000/1001");
+        assert_eq!(output_fps(24.0), "24");
+        assert_eq!(output_fps(0.0), "30");
+    }
+
+    #[test]
+    fn parses_loudnorm_json() {
+        let log = "[Parsed_loudnorm_0 @ 0x1]\n{\n\t\"input_i\" : \"-24.80\",\n\t\"input_tp\" : \"-6.20\",\n\t\"input_lra\" : \"3.10\",\n\t\"input_thresh\" : \"-35.00\",\n\t\"target_offset\" : \"0.30\"\n}\n";
+        let stats = parse_loudnorm(log).unwrap();
+        assert_eq!(stats.input_i, -24.8);
+        assert_eq!(stats.target_offset, 0.3);
+        let silent = log.replace("-24.80", "-inf");
+        assert_eq!(parse_loudnorm(&silent), None);
     }
 
     #[test]

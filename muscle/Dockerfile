@@ -11,7 +11,7 @@ RUN touch src/main.rs && cargo build --release --locked
 # the model download, or pick tiny/base/small/medium (bigger = better, slower).
 FROM debian:bookworm-slim AS whisper
 ARG WHISPER_VERSION=v1.7.6
-ARG WHISPER_MODEL=base
+ARG WHISPER_MODEL=small
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git cmake build-essential curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -23,7 +23,7 @@ RUN mkdir -p /models \
     && if [ "${WHISPER_MODEL}" != "none" ]; then sh ./models/download-ggml-model.sh "${WHISPER_MODEL}" /models; fi
 
 FROM debian:bookworm-slim
-ARG WHISPER_MODEL=base
+ARG WHISPER_MODEL=small
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg fonts-noto-cjk ca-certificates libgomp1 \
     && rm -rf /var/lib/apt/lists/*

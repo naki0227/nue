@@ -4,8 +4,8 @@ services:
     build:
       context: ./muscle
       args:
-        # tiny | base | small | medium | none (skip on-device subtitles)
-        WHISPER_MODEL: ${WHISPER_MODEL:-base}
+        # tiny | base | small (default) | medium | none (skip on-device subtitles)
+        WHISPER_MODEL: ${WHISPER_MODEL:-small}
     command: ["muscle", "worker"]
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}

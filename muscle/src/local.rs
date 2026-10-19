@@ -259,6 +259,9 @@ mod tests {
             has_audio: false,
             width: 1920,
             height: 1080,
+            fps: 30.0,
+            color_transfer: String::new(),
+            rotation: 0,
         };
         let signals = LocalSignals {
             silences: vec![],

@@ -191,3 +191,99 @@ fn renders_silent_clip_horizontally() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+fn integrated_loudness(video: &Path) -> f64 {
+    let out = Command::new("ffmpeg")
+        .args(["-nostats", "-i"])
+        .arg(video)
+        .args(["-af", "ebur128", "-f", "null", "-"])
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stderr);
+    let summary = &log[log.rfind("Summary").unwrap()..];
+    let line = summary
+        .lines()
+        .find(|l| l.trim_start().starts_with("I:"))
+        .unwrap();
+    line.split_whitespace().nth(1).unwrap().parse().unwrap()
+}
+
+#[test]
+fn keeps_frame_rate_tone_maps_hdr_and_normalizes_loudness() {
+    if !has_ffmpeg() {
+        eprintln!("ffmpeg not installed; skipping");
+        return;
+    }
+    let dir = workspace("quality");
+    let input = dir.join("hlg.mp4");
+    // 60 fps HLG-tagged clip (like iPhone footage) with quiet audio.
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=1280x720:r=60:d=4",
+        ])
+        .args(["-f", "lavfi", "-i", "sine=f=440:d=4,volume=0.05"])
+        .args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .args([
+            "-color_primaries",
+            "bt2020",
+            "-color_trc",
+            "arib-std-b67",
+            "-colorspace",
+            "bt2020nc",
+        ])
+        .args(["-c:a", "aac"])
+        .arg(&input)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_muscle"))
+        .arg("run")
+        .arg(&input)
+        .args([
+            "--analyzer",
+            "local",
+            "--no-bgm",
+            "--no-se",
+            "--no-jump-cut",
+        ])
+        .env("NUE_DATA_DIR", dir.join("data"))
+        .env("NUE_X264_PRESET", "ultrafast")
+        .env_remove("GEMINI_API_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let video = dir.join("data/output/hlg_edited.mp4");
+    assert_eq!(
+        ffprobe(&video, "stream=r_frame_rate").lines().next(),
+        Some("60/1")
+    );
+    assert_eq!(
+        ffprobe(&video, "stream=color_transfer").lines().next(),
+        Some("bt709")
+    );
+    let lufs = integrated_loudness(&video);
+    assert!(
+        (lufs + 14.0).abs() < 1.5,
+        "loudness {lufs} LUFS, expected about -14"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}

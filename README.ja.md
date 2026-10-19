@@ -67,7 +67,16 @@ docker compose up -d --build
 [http://localhost:3000](http://localhost:3000) を開いて動画をドロップすると、自動で編集が始まります。
 完成後は「Edit」でカット・テロップ・字幕・効果音・ズーム・アイコンを直して「Re-render」で再書き出しできます。動画・サムネイル・字幕(.srt)・編集指示書は画面からダウンロードでき、`data/output/` にも保存されます。
 
-字幕用のwhisperモデルは既定で `base` を同梱します。日本語の精度を上げたい場合は `.env` に `WHISPER_MODEL=small`（または `medium`）を設定して再ビルドしてください。`none` にすると字幕生成をスキップします。
+字幕用のwhisperモデルは既定で `small` を同梱します。さらに精度を上げたい場合は `.env` に `WHISPER_MODEL=medium` を設定して再ビルドしてください（軽くしたい場合は `base`）。`none` にすると字幕生成をスキップします。
+
+## 🎞 書き出し品質
+
+- 元動画のフレームレートを維持（24〜60fps、60fps素材は60fpsのまま）
+- iPhoneのHDR（HLG/Dolby Vision）素材はSDR（BT.709）に正しくトーンマッピング
+- 拡縮はlanczos、ズームは縮小後ではなく元解像度から切り出し
+- H.264 High / CRF 18 / BT.709タグ付き。途中の音声は無劣化（PCM）で、AAC 256kへの変換は最後の1回だけ
+- 声の整音（低音カット・軽いノイズ除去・コンプレッサー）、カット境界の短いフェード
+- 2パスのラウドネス正規化で -14 LUFS / トゥルーピーク -1 dBTP
 
 ## 💻 CLI
 
@@ -97,7 +106,9 @@ muscle worker                                        data/raw を監視して自
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Geminiを使う場合 |
 | `NUE_WHISPER_MODEL` / `NUE_WHISPER_BIN` / `NUE_LANGUAGE` | 字幕生成（言語の既定は `auto`、例: `ja`） |
 | `NUE_FONT` | テロップ・字幕のフォント |
-| `NUE_X264_PRESET` | エンコード速度（既定 `veryfast`） |
+| `NUE_X264_PRESET` / `NUE_CRF` | 画質と速度（既定 `medium` / `18`。速さ優先なら `veryfast`、さらに高画質なら `slow` や CRF `16`） |
+| `NUE_LOUDNESS` | 仕上がりの音量（既定 `-14` LUFS。YouTube・TikTok・Instagramの基準） |
+| `NUE_SHARPEN` | `1` で縦切り出しなどで拡大する場面に軽いシャープ処理 |
 
 ## 🎨 アセットを増やす
 
