@@ -68,3 +68,20 @@ jobs:
           curl -sf http://localhost:3000/ | grep -q "Nue"
           curl -sf http://localhost:3000/api/assets | grep -q '"impact"'
           docker compose down
+
+  ios:
+    name: iOS app (NueKit + SwiftUI)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - run: xcodebuild -version && swift --version
+      - name: NueKit unit + AVFoundation render tests
+        run: swift test --package-path ios/NueKit
+      - name: Generate the Xcode project
+        run: brew install xcodegen && cd ios && xcodegen generate
+      - name: Build the app for the iOS simulator
+        run: |
+          cd ios
+          xcodebuild -project Nue.xcodeproj -scheme Nue -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build | tail -40
+          exit ${PIPESTATUS[0]}

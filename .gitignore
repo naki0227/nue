@@ -38,3 +38,9 @@ web/.docusaurus/
 # OS
 .DS_Store
 **/.DS_Store
+
+# iOS
+ios/Nue.xcodeproj/
+ios/NueApp/Info.plist
+ios/NueKit/.build/
+ios/build/
