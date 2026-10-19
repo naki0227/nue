@@ -1,56 +1,24 @@
 services:
-  gateway:
-    build: ./gateway
-    profiles:
-      - legacy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./data:/app/data
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-    restart: always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  brain:
-    build: ./brain
-    profiles:
-      - legacy
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=gemini-2.5-flash
-    volumes:
-      - ./data:/app/data
-    deploy:
-      resources:
-        limits:
-          memory: 1024M # Increased for safety per requirements
-    restart: always # Changed from on-failure to always
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
+  # Rust worker: watches data/raw, analyzes (local or Gemini), renders with FFmpeg.
   muscle:
-    build: ./muscle
-    command: ["./muscle", "worker"]
+    build:
+      context: ./muscle
+      args:
+        # tiny | base | small | medium | none (skip on-device subtitles)
+        WHISPER_MODEL: ${WHISPER_MODEL:-base}
+    command: ["muscle", "worker"]
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=gemini-2.5-flash
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - NUE_ANALYZER=${NUE_ANALYZER:-auto}
+      - NUE_LANGUAGE=${NUE_LANGUAGE:-auto}
     volumes:
       - ./data:/app/data
     deploy:
       resources:
         limits:
-          memory: 3072M # Increased for large video files (was 1024M)
-          cpus: '2.0' # Increased for faster processing (was 1.0)
+          memory: 3072M
+          cpus: "2.0"
     restart: always
     logging:
       driver: "json-file"
@@ -58,15 +26,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  trend_watcher:
-    build:
-      context: ./trend_watcher
-    volumes:
-      - ./data:/app/data
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-    restart: "no"
-
+  # Next.js: upload UI, job status and output delivery (API routes).
   web:
     build: ./web
     user: "0:0"

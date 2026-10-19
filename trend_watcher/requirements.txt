@@ -1,5 +1,0 @@
-google-genai
-yt-dlp
-python-dotenv
-python-json-logger
-requests

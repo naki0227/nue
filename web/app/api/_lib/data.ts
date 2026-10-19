@@ -4,14 +4,16 @@ import path from "node:path";
 
 export interface JobStatus {
   job_id: string;
-  status: "uploaded" | "analyzing" | "rendering" | "completed" | "failed";
+  status: "uploaded" | "analyzing" | "analyzed" | "rendering" | "completed" | "failed";
   original_filename?: string;
   stored_filename?: string;
   message?: string;
   progress?: number;
-  updated_at?: string;
+  updated_at?: string | number;
   output_url?: string;
   thumbnail_url?: string;
+  subtitle_url?: string;
+  plan_url?: string;
 }
 
 export function dataDir() {

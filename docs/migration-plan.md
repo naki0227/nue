@@ -92,3 +92,29 @@
 
 - `docker compose up` でWebとRust rendererだけが起動する
 - CLIとWebの両方で同じ編集/レンダリング線が使える
+
+状態:
+
+- 完了
+- `gateway/`(Go)、`brain/`・`trend_watcher/`(Python)、`go.mod`、Brain CI を削除
+- CIを `.github/workflows/ci.yml` に統合（Rust: fmt/clippy/test + ffmpeg統合テスト、Web: lint/tsc/build）
+
+## Step 7: APIなしで完結させる
+
+目的:
+
+- Gemini APIキーがなくても実用的な編集ができるようにする
+- 字幕生成をローカルで行う
+
+状態:
+
+- 完了
+- ローカル解析（無音カット、音量ピーク→効果音/ズーム/アイコン、シーン検出）を `muscle/src/local.rs` に実装
+- whisper.cppによる字幕生成とSRT書き出し（Dockerイメージに同梱）
+- Geminiは `--analyzer gemini|auto` の任意機能。失敗時はローカルにフォールバック
+- Webのメタデータ（台本、手動カット/テロップ/エフェクト、BGM/SE/字幕/形式）をRust側で反映
+
+## 次のステップ
+
+- Webで編集指示書をタイムライン表示して手修正 → `muscle render` で再書き出し
+- iOSクライアント（[mobile-strategy.md](mobile-strategy.md)）

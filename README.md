@@ -1,141 +1,123 @@
-# Nue - AI Video Alchemy Platform 🧪
+# Nue (鵺) - AI Video Alchemy Platform 🧪
 
 ![GitHub License](https://img.shields.io/github/license/naki0227/nue)
-![Rust](https://img.shields.io/badge/Rust-Muscle-orange?logo=rust)
-![Python](https://img.shields.io/badge/Python-Brain-blue?logo=python)
-![Go](https://img.shields.io/badge/Go-Gateway-cyan?logo=go)
-![Docker](https://img.shields.io/badge/Docker-Container-blue?logo=docker)
-![Gemini](https://img.shields.io/badge/AI-Gemini_2.5-magenta?logo=google-gemini)
+![Rust](https://img.shields.io/badge/Rust-CLI_%2F_Renderer-orange?logo=rust)
+![Next.js](https://img.shields.io/badge/Next.js-Web_UI-black?logo=next.js)
+![FFmpeg](https://img.shields.io/badge/FFmpeg-Render-green?logo=ffmpeg)
+![Gemini](https://img.shields.io/badge/AI-Gemini_(optional)-magenta?logo=google-gemini)
 [![Enludus](https://img.shields.io/badge/Project-Enludus-7000FF)](https://enludus.vercel.app)
 
-<p align="center">
-  <b>"Automated Video Processing Platform turning raw footage into YouTube-ready content."</b>
-</p>
+[日本語](README.ja.md)
+
+**Nue** turns raw footage into a finished short or YouTube video: jump cuts, subtitles, telops, sound effects, ducked background music, sticker icons, vertical reframing and a thumbnail, in one command.
+
+**No API key required.** Analysis runs locally (FFmpeg + whisper.cpp). Set a Gemini API key only if you want an AI editor that understands what is on screen.
 
 ---
 
-[🇯🇵 Japanese (日本語)](README.ja.md)
+## 🚀 Features
 
-## 📖 The "Why"
-
-In video production, editing is the biggest barrier.
-*   **The Problem:** It often takes over 2 hours to cut, caption, and adjust audio for just a 10-minute video.
-*   **The Solution:** Nue acts as your personal "AI Editor". It understands the content (funny scenes, serious moments, shocking events) and fully automates BGM selection, digital zoom effects, and even vertical crops for Shorts.
-
-## 🚀 Key Features
-
-### 🧠 Brain (Trend Analysis & Direction)
-*   **Style Cloning:** Analyzes and learns trending Vlog styles (tempo, filters, music) from YouTube and TikTok.
-*   **Semantic Analysis:** Uses **Gemini 2.5 Flash** to understand not just visual changes but the context of "what is happening".
-*   **AI Thumbnails:** Identifies the most "Clickbaity" moments and generates thumbnails with catchy titles.
-
-### 💪 Muscle (High-Speed Rendering)
-*   **Rust + FFmpeg:** Efficiently builds and executes complex FFmpeg filter graphs using a concurrent architecture in Rust.
-*   **Visual Effects:**
-    *   **Digital Zoom:** Applies "Ken Burns" effects to static shots or impact zooms to shocking moments.
-    *   **Smart Crop:** Automatically detects the subject and crops 16:9 video to 9:16 for Shorts.
-*   **Audio Engineering:**
-    *   **Auto Ducking:** Automatically lowers BGM volume when speech is detected.
-    *   **Reaction SE:** Inserts appropriate sound effects (laughter, shock sounds) at the perfect timing.
-
----
+| Feature | What it does | Needs |
+| --- | --- | --- |
+| Jump cuts | Detects and removes silent pauses (with breathing room) | nothing |
+| Subtitles | Transcribes speech, burns it in, writes an `.srt` | whisper.cpp model (bundled in Docker) |
+| Telops | Script lines like `00:00:15 - Key point!` or manual captions, styled | nothing |
+| Sound effects | `impact` on loudness peaks, `whoosh` on scene changes; `pop` `ding` `boing` `buzzer` `sparkle` manually or via Gemini | nothing (`data/se`) |
+| Sticker icons | `exclaim` `question` `heart` `star` `sparkle` `sweat` `check` `cross` `arrow` `fire` | nothing (`data/icons`) |
+| Zoom / pan | Punch-in on highlights; manual `zoom_in` `zoom_out` `pan_left` `pan_right` | nothing |
+| BGM | Sidechain ducking under speech | `data/bgm` |
+| Output formats | Vertical 9:16, horizontal 16:9, square 1:1 | nothing |
+| Thumbnail | Highlight frame + title | nothing |
+| AI editing | Picks the best moments, drops retakes, reframes on the subject, writes telops | `GEMINI_API_KEY` (optional) |
 
 ## 🛠 Architecture
 
-Nue adopts a microservice architecture optimized for local execution via Docker Compose, but easily deployable to AWS or GCP.
-
 ```mermaid
-graph TD
-    U["User / Camera"] -->|"Upload Video (.mp4)"| G
-
-    subgraph "Nue Platform (Docker)"
-        G["Gateway (Go)"] -->|"Save"| V[("Shared Volume")]
-        
-        B["Brain (Python)"] -->|"Detect New File"| V
-        B <-->|"Video Analysis"| Gem["Google Gemini API"]
-        B -->|"Edit Instructions (JSON)"| V
-        
-        M["Muscle (Rust)"] -->|"Detect Instructions"| V
-        M -->|"FFmpeg Rendering"| V
-        
-        T["Trend Watcher"] -->|"Collect Styles"| YT["YouTube/TikTok"]
-        T -->|"Update Style DB"| B
-    end
-    
-    M -->|"Output (.mp4/.jpg)"| O["Finished Content"]
+graph LR
+    U["Browser / CLI"] -->|video| W["Web (Next.js API routes)"]
+    W -->|data/raw| V[("shared data/")]
+    M["muscle (Rust worker)"] -->|watches| V
+    M -->|local analysis: silence / loudness / scenes / whisper.cpp| M
+    M -.->|optional| G["Gemini API"]
+    M -->|edit plan JSON| V
+    M -->|FFmpeg render| O["data/output: video / thumbnail / SRT / plan"]
+    W -->|job status, preview| U
 ```
 
-## 💻 Tech Stack
+| Service | Tech | Role |
+| --- | --- | --- |
+| **muscle** | Rust | CLI and worker: analyze (local or Gemini) → edit plan JSON → FFmpeg render |
+| **web** | Next.js | Upload, options, progress, preview, downloads |
 
-| Service | Technology | Role |
-|:---|:---|:---|
-| **Gateway** | **Go (Gin)** | Extremely fast, low-memory upload server. |
-| **Brain** | **Python 3.11** | Core AI Logic. Handles Gemini SDK, file monitoring, and trend analysis. |
-| **Muscle** | **Rust** | Heavy lifting. Generates and runs complex FFmpeg filter chains. |
-| **Infra** | **Docker Compose** | Orchestration of all services and shared volume (`/data`). |
+Every analyzer writes the same [edit plan JSON](docs/edit-plan.schema.json). Edit it by hand and run `muscle render` to re-render; a future iOS client shares the same format ([docs/mobile-strategy.md](docs/mobile-strategy.md)).
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick start (Docker)
 
-### Prerequisites
-*   Docker Desktop
-*   Google Gemini API Key
+```bash
+git clone https://github.com/naki0227/nue.git
+cd nue
+cp .env.example .env        # set GEMINI_API_KEY only if you want Gemini
+docker compose up -d --build
+```
 
-### Installation 🛠️
+Open [http://localhost:3000](http://localhost:3000) and drop a video. The finished video, thumbnail, subtitles (.srt) and edit plan can be downloaded from the page and are saved in `data/output/`.
 
-Designed for anyone to start easily.
+The image bundles the `base` whisper model. For better accuracy set `WHISPER_MODEL=small` (or `medium`) in `.env` and rebuild; `none` skips subtitles.
 
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/naki0227/nue.git
-    cd nue
-    ```
+## 💻 CLI
 
-2.  **Environment Setup**
-    Copy `.env.example` to `.env` and set your Google Gemini API Key.
-    ```bash
-    cp .env.example .env
-    ```
+```bash
+cd muscle && cargo build --release
+./target/release/muscle run input.mp4 --out final.mp4
+```
 
-3.  **Start (Docker Compose)**
-    ```bash
-    docker compose up -d --build
-    ```
+```text
+muscle analyze <video> [--out plan.json] [options]   create an edit plan
+muscle render <plan.json> [--out video.mp4]          render a (hand-edited) plan
+muscle run <video> [--out video.mp4] [options]       analyze -> render
+muscle worker                                        watch data/raw (Docker default)
 
-4.  **Access Web UI**
-    Open [http://localhost:3000](http://localhost:3000) in your browser.
-    Drag and drop video files to start automatic editing.
+--analyzer auto|local|gemini   --format vertical|horizontal|square
+--script notes.txt             --meta job.json
+--no-bgm  --no-se  --no-subtitles  --no-jump-cut
+```
 
----
+Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `NUE_FONT`). For subtitles, [whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s `whisper-cli` plus a model in `data/models/ggml-*.bin` (or `NUE_WHISPER_MODEL`). An `.srt` next to the video is used as-is.
 
-## 📉 Roadmap
+| Variable | Meaning |
+| --- | --- |
+| `NUE_DATA_DIR` | Data directory (default `/app/data` or `./data`) |
+| `NUE_ANALYZER` | Default analyzer: `auto` / `local` / `gemini` |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | Enable Gemini |
+| `NUE_WHISPER_MODEL` / `NUE_WHISPER_BIN` / `NUE_LANGUAGE` | Subtitles (language defaults to `auto`, e.g. `ja`) |
+| `NUE_FONT` | Font for telops and subtitles |
+| `NUE_X264_PRESET` | Encoder speed (default `veryfast`) |
 
-> Nue is being migrated toward a Rust CLI + Next.js Web UI architecture. See [`docs/migration-plan.md`](docs/migration-plan.md) and [`docs/language-strategy.md`](docs/language-strategy.md) for the current plan.
+## 🎨 Adding assets
 
-- [x] **Phase 1-2**: MVP Architecture & Basic Editing (Cut, Transition)
-- [x] **Phase 3**: Trend Analysis & Learning Engine
-- [x] **Phase 6**: Audio Engineering (Ducking, Auto SE)
-- [x] **Phase 7**: Visual Effects (Zoom/Pan)
-- [x] **Phase 8**: Auto Thumbnail Generation
-- [x] **Phase 9**: Automation & QA (GitHub Actions)
-- [x] **Phase 10**: Vertical Video Support (Smart Crop)
-- [x] **Phase 11**: Advanced Caption Styling
-- [x] **Phase 12**: Web Interface (Next.js)
-- [ ] **Phase 13**: User Auth & Multi-user Support (Future)
+- Sound effects: drop `data/se/<name>.wav|mp3`; `<name>` becomes a `se_events[].type` (`scripts/generate-sound-effects.sh` regenerates the bundled ones)
+- Icons: drop a transparent `data/icons/<name>.png`; `<name>` becomes an `overlays[].asset` (`scripts/generate_icons.py` regenerates the bundled ones)
+- BGM: files in `data/bgm/` whose name contains the mood (`calm`, `energetic`, ...) are preferred
 
----
+## 📈 Roadmap
 
-## 🧭 Planning Docs
+- [x] MVP, cuts and transitions, audio ducking, SE, zoom/pan, thumbnails, vertical video, caption styling, web UI
+- [x] Two services: Rust CLI + Next.js (Go gateway and Python brain retired)
+- [x] API-free local analysis (silence, loudness peaks, scene changes)
+- [x] On-device subtitles (whisper.cpp) and SRT export
+- [x] Sound-effect and icon assets, horizontal/square output
+- [ ] Timeline editing of the plan in the web UI → re-render
+- [ ] iOS app (Apple Intelligence + Speech/Vision/SoundAnalysis + AVFoundation)
+- [ ] Auth & multi-user
 
-- [`docs/migration-plan.md`](docs/migration-plan.md): staged migration from Go/Python toward Rust CLI + Next.js
-- [`docs/language-strategy.md`](docs/language-strategy.md): language-boundary rationale
-- [`docs/roi.md`](docs/roi.md): time/cost-saving assumptions and success metrics
+## 🧭 Design docs
 
----
-
-## 🤝 Contribution
-Contributions are welcome! Please check `CONTRIBUTING.md` for details.
+- [`docs/mobile-strategy.md`](docs/mobile-strategy.md): API AI vs. Apple Intelligence, mobile, Remotion, Go (Japanese)
+- [`docs/edit-plan.schema.json`](docs/edit-plan.schema.json): edit plan schema
+- [`docs/language-strategy.md`](docs/language-strategy.md), [`docs/migration-plan.md`](docs/migration-plan.md), [`docs/roi.md`](docs/roi.md)
 
 ## 📄 License
-This project is licensed under the MIT License.
+
+MIT. The bundled sound effects and icons are original assets generated by the scripts in this repository.
