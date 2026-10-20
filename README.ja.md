@@ -5,7 +5,7 @@
 ![Next.js](https://img.shields.io/badge/Next.js-Web_UI-black?logo=next.js)
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-Render-green?logo=ffmpeg)
 ![Gemini](https://img.shields.io/badge/AI-Gemini_(optional)-magenta?logo=google-gemini)
-[![Enludus](https://img.shields.io/badge/Project-Enludus-7000FF)](https://enludus.vercel.app)
+[![Enludus](https://img.shields.io/badge/Project-Enludus-7000FF)](https://enludus.com)
 
 [English](README.md)
 
