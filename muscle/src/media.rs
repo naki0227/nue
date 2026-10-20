@@ -16,6 +16,8 @@ pub struct MediaInfo {
     pub color_transfer: String,
     /// Display rotation in degrees (phones store portrait video rotated).
     pub rotation: i32,
+    /// Recording date (YYYY-MM-DD) from the container's creation_time.
+    pub recorded: Option<String>,
 }
 
 impl MediaInfo {
@@ -58,7 +60,7 @@ fn parse_rate(rate: &str) -> f64 {
 pub fn probe(path: &Path) -> Result<MediaInfo> {
     let output = Command::new("ffprobe")
         .args(["-v", "error", "-show_entries"])
-        .arg("format=duration:stream=codec_type,width,height,avg_frame_rate,r_frame_rate,color_transfer:stream_side_data=rotation:stream_tags=rotate")
+        .arg("format=duration:format_tags=creation_time:stream=codec_type,width,height,avg_frame_rate,r_frame_rate,color_transfer:stream_side_data=rotation:stream_tags=rotate")
         .args(["-of", "json"])
         .arg(path)
         .output()
@@ -99,6 +101,11 @@ pub fn probe(path: &Path) -> Result<MediaInfo> {
             .unwrap_or("")
             .to_string(),
         rotation: video.map(rotation_of).unwrap_or(0),
+        recorded: json["format"]["tags"]["creation_time"]
+            .as_str()
+            .and_then(|t| t.get(..10))
+            .filter(|d| d.len() == 10 && !d.starts_with("1970") && !d.starts_with("1904"))
+            .map(str::to_string),
     })
 }
 

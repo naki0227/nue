@@ -16,6 +16,7 @@ use crate::plan::{
     format_time, parse_time, CaptionStyle, Cut, EditPlan, Overlay, SeEvent, Thumbnail, TimedText,
     VisualEffect,
 };
+use crate::style::{Amount, Style, TitleKind};
 use crate::subtitles::{group_words, Transcript, Word};
 use std::path::Path;
 
@@ -295,9 +296,14 @@ pub fn build_plan(
     signals: &LocalSignals,
     transcript: Transcript,
     jump_cut: bool,
+    style: &Style,
 ) -> EditPlan {
     let duration = info.duration;
+    let rules = &style.edit;
+    let jump_cut = jump_cut && rules.jump_cut;
     let mut plan = EditPlan::new(file_name, job_id, "local");
+    plan.style = Some(style.name.clone());
+    plan.recorded_at = info.recorded.clone();
 
     // 1) What to keep: speech without dead air, fillers and false starts.
     let mut ranges = if jump_cut && !signals.silences.is_empty() {
@@ -315,7 +321,7 @@ pub fn build_plan(
     }
     let words = transcript.words;
     let mut removed = Vec::new();
-    if jump_cut && !words.is_empty() {
+    if jump_cut && rules.remove_fillers && !words.is_empty() {
         removed.extend(filler_spans(&words));
         removed.extend(retake_spans(&group_words(&words)));
         let trimmed: Vec<(f64, f64)> = subtract_ranges(&ranges, &removed)
@@ -354,10 +360,10 @@ pub fn build_plan(
     let mut punched = false;
     for (i, (s, e)) in ranges.iter().enumerate() {
         let jump = i > 0 && s - ranges[i - 1].1 < 1.5;
-        punched = jump && !punched;
+        punched = rules.punch_in && jump && !punched;
         let effect = if punched {
             "punch_in"
-        } else if e - s >= 4.0 {
+        } else if rules.push_in && e - s >= 4.0 {
             "push_in"
         } else {
             continue;
@@ -371,7 +377,13 @@ pub fn build_plan(
     }
 
     // 3) Emphasis: loud moments become telops; the strongest also zoom and hit.
-    let peaks: Vec<f64> = loudness_peaks(&signals.loudness, 6.0)
+    let (spacing, max_telops) = match rules.telops {
+        Amount::None => (6.0, 0),
+        Amount::Minimal => (12.0, 2),
+        Amount::Normal => (6.0, 12),
+        Amount::Lots => (3.5, 20),
+    };
+    let peaks: Vec<f64> = loudness_peaks(&signals.loudness, spacing)
         .into_iter()
         .filter(|t| in_ranges(&ranges, *t))
         .collect();
@@ -380,10 +392,20 @@ pub fn build_plan(
         loudness_at(&signals.loudness, *b).total_cmp(&loudness_at(&signals.loudness, *a))
     });
     let strongest: Vec<f64> = by_strength.iter().take(3).copied().collect();
+    let sounds = rules.sound_effects;
+    let emphasis_sounds = matches!(sounds, Amount::Normal | Amount::Lots);
+    let chosen: Vec<f64> = if max_telops >= peaks.len() {
+        peaks.clone()
+    } else {
+        let mut picked: Vec<f64> = by_strength.iter().take(max_telops).copied().collect();
+        picked.sort_by(f64::total_cmp);
+        picked
+    };
 
-    for t in peaks.iter().take(12) {
+    for t in &peaks {
         let strong = strongest.contains(t);
-        if let Some(line) = line_at(&lines, *t) {
+        let line = line_at(&lines, *t).filter(|_| chosen.contains(t));
+        if let Some(line) = line {
             let start = parse_time(&line.start).unwrap_or(*t).max(t - 0.3);
             let end = parse_time(&line.end)
                 .unwrap_or(t + 2.0)
@@ -394,6 +416,7 @@ pub fn build_plan(
                 end: format_time(end),
                 text: telop_text(&line.text),
                 style: Some(telop_style(None)),
+                words: Vec::new(),
             });
             let icon = if line.text.ends_with(['！', '!']) {
                 Some("exclaim")
@@ -402,7 +425,7 @@ pub fn build_plan(
             } else {
                 None
             };
-            if let Some(icon) = icon {
+            if let (true, Some(icon)) = (rules.icons, icon) {
                 plan.overlays.push(Overlay {
                     asset: icon.to_string(),
                     start: format_time(start),
@@ -411,19 +434,21 @@ pub fn build_plan(
                     scale: Some(0.16),
                 });
             }
-            plan.se_events.push(SeEvent {
-                timestamp: format_time(start),
-                event_type: if strong { "impact" } else { "pop" }.to_string(),
-                tag: Some("emphasis".to_string()),
-            });
-        } else if strong {
+            if emphasis_sounds {
+                plan.se_events.push(SeEvent {
+                    timestamp: format_time(start),
+                    event_type: if strong { "impact" } else { "pop" }.to_string(),
+                    tag: Some("emphasis".to_string()),
+                });
+            }
+        } else if strong && emphasis_sounds {
             plan.se_events.push(SeEvent {
                 timestamp: format_time(*t),
                 event_type: "impact".to_string(),
                 tag: Some("loudness_peak".to_string()),
             });
         }
-        if strong {
+        if strong && rules.emphasis_zoom > 1.0 {
             plan.visual_effects.push(VisualEffect {
                 start: format_time(*t),
                 end: Some(format_time((t + 0.9).min(duration))),
@@ -431,9 +456,18 @@ pub fn build_plan(
                 speed: Some("fast".to_string()),
             });
         }
+        // Reaction shake on the very strongest moment(s).
+        if rules.shake && strongest.iter().take(2).any(|s| s == t) {
+            plan.visual_effects.push(VisualEffect {
+                start: format_time(*t),
+                end: Some(format_time((t + 0.4).min(duration))),
+                effect_type: "shake".to_string(),
+                speed: None,
+            });
+        }
     }
 
-    // 4) Hook: an opening title over the first seconds.
+    // 4) Opening title (hook / title card) over the first seconds.
     let title = strongest
         .first()
         .and_then(|t| line_at(&lines, *t))
@@ -441,8 +475,8 @@ pub fn build_plan(
         .map(|l| telop_text(&l.text))
         .unwrap_or_default();
     if let Some((first_start, first_end)) = ranges.first().copied() {
-        if !title.is_empty() {
-            let hook_end = (first_start + 2.5).min(first_end);
+        if !title.is_empty() && style.title.kind != TitleKind::None {
+            let hook_end = (first_start + style.title.duration).min(first_end);
             plan.telops
                 .retain(|t| parse_time(&t.start).map(|s| s >= hook_end).unwrap_or(true));
             plan.telops.insert(
@@ -455,25 +489,32 @@ pub fn build_plan(
                         position: Some("center".to_string()),
                         ..telop_style(Some("large"))
                     }),
+                    words: Vec::new(),
                 },
             );
         }
-        plan.se_events.push(SeEvent {
-            timestamp: format_time(first_start),
-            event_type: "whoosh".to_string(),
-            tag: Some("opening".to_string()),
-        });
+        if sounds != Amount::None && style.transitions.whoosh {
+            plan.se_events.push(SeEvent {
+                timestamp: format_time(first_start),
+                event_type: "whoosh".to_string(),
+                tag: Some("opening".to_string()),
+            });
+        }
     }
 
     // 5) Scene changes: whoosh, away from other sounds.
     let mut last_whoosh = f64::NEG_INFINITY;
+    let whoosh_gap = if sounds == Amount::Lots { 4.0 } else { 6.0 };
     for t in &signals.scenes {
+        if sounds == Amount::None || !style.transitions.whoosh {
+            break;
+        }
         let busy = plan.se_events.iter().any(|se| {
             parse_time(&se.timestamp)
                 .map(|s| (s - t).abs() < 1.5)
                 .unwrap_or(false)
         });
-        if in_ranges(&ranges, *t) && !busy && t - last_whoosh >= 6.0 {
+        if in_ranges(&ranges, *t) && !busy && t - last_whoosh >= whoosh_gap {
             plan.se_events.push(SeEvent {
                 timestamp: format_time(*t),
                 event_type: "whoosh".to_string(),
@@ -533,6 +574,7 @@ mod tests {
             fps: 30.0,
             color_transfer: String::new(),
             rotation: 0,
+            recorded: None,
         }
     }
 
@@ -582,6 +624,7 @@ mod tests {
             &signals,
             Transcript::default(),
             true,
+            &crate::style::shorts(),
         );
         assert_eq!(plan.cut_ranges(), vec![(0.0, 4.0), (4.0, 8.0), (8.0, 12.0)]);
     }
@@ -623,6 +666,7 @@ mod tests {
             end: format_time(e),
             text: t.into(),
             style: None,
+            words: Vec::new(),
         };
         let lines = vec![
             line(0.0, 0.8, "今日は"),
@@ -671,7 +715,15 @@ mod tests {
             lines: group_words(&words),
             words,
         };
-        let plan = build_plan("a.mp4", "a", &info(12.0, true), &signals, transcript, true);
+        let plan = build_plan(
+            "a.mp4",
+            "a",
+            &info(12.0, true),
+            &signals,
+            transcript,
+            true,
+            &crate::style::shorts(),
+        );
 
         let ranges = plan.cut_ranges();
         assert!(

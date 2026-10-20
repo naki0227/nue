@@ -19,6 +19,7 @@
 
 | Feature | What it does | Needs |
 | --- | --- | --- |
+| Editing formats | `shorts` `vlog` `variety` `cinematic` `business`: After Effects–style text animation (pop, bounce, blur-in, typewriter, word-by-word highlight), camera moves and transitions (zoom, whip, glitch, dips), colour looks (film fade, teal & orange, grain, halation, 2.39:1 bars), title cards and audio per format; add your own in `data/styles/` ([details](docs/editing-formats.md)) | nothing |
 | Jump cuts | Detects and removes silent pauses (with breathing room) | nothing |
 | Subtitles | Transcribes speech, burns it in, writes an `.srt` | whisper.cpp model (bundled in Docker) |
 | Telops | Script lines like `00:00:15 - Key point!` or manual captions, styled | nothing |
@@ -88,13 +89,15 @@ muscle analyze <video> [--out plan.json] [options]   create an edit plan
 muscle render <plan.json> [--out video.mp4]          render a (hand-edited) plan
 muscle run <video> [--out video.mp4] [options]       analyze -> render
 muscle worker                                        watch data/raw (Docker default)
+muscle styles                                        list editing formats
 
 --analyzer auto|local|gemini   --format vertical|horizontal|square
+--style shorts|vlog|variety|cinematic|business|<data/styles/name>
 --script notes.txt             --meta job.json
 --no-bgm  --no-se  --no-subtitles  --no-jump-cut
 ```
 
-Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `NUE_FONT`). For subtitles, [whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s `whisper-cli` plus a model in `data/models/ggml-*.bin` (or `NUE_WHISPER_MODEL`). An `.srt` next to the video is used as-is.
+Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK). `muscle/scripts/fetch-fonts.sh` downloads the open-licensed fonts the formats use into `data/fonts` (the Docker image already has them). For subtitles, [whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s `whisper-cli` plus a model in `data/models/ggml-*.bin` (or `NUE_WHISPER_MODEL`). An `.srt` next to the video is used as-is.
 
 | Variable | Meaning |
 | --- | --- |
@@ -102,7 +105,7 @@ Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `
 | `NUE_ANALYZER` | Default analyzer: `auto` / `local` / `gemini` |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Enable Gemini |
 | `NUE_WHISPER_MODEL` / `NUE_WHISPER_BIN` / `NUE_LANGUAGE` | Subtitles (language defaults to `auto`, e.g. `ja`) |
-| `NUE_FONT` | Font for telops and subtitles |
+| `NUE_STYLE` | Default editing format (`shorts`) |
 | `NUE_X264_PRESET` / `NUE_CRF` | Quality vs. speed (default `medium` / `18`; `veryfast` for speed, `slow` or CRF `16` for even higher quality) |
 | `NUE_LOUDNESS` | Output loudness (default `-14` LUFS, the YouTube/TikTok/Instagram norm) |
 | `NUE_SHARPEN` | `1` adds mild sharpening when reframing enlarges the picture |
@@ -122,11 +125,13 @@ Requirements: `ffmpeg`/`ffprobe` and a CJK-capable font (Noto Sans CJK, or set `
 - [x] Sound-effect and icon assets, horizontal/square output
 - [x] Timeline editing of the plan in the web UI (cuts, telops, subtitles, SE, zoom, icons) → re-render
 - [x] iOS app, fully on device: Speech subtitles, Apple Intelligence telops, AVFoundation render ([ios/](ios/README.md))
+- [x] Editing formats with After Effects–style motion, looks and typography (renderer; not yet in the iOS app)
 
 Not planned for now (see [roi.md](docs/roi.md)): auth, multi-user, billing. They come in once Nue is run as a shared service.
 
 ## 🧭 Design docs
 
+- [`docs/editing-formats.md`](docs/editing-formats.md): editing formats, what makes edits look "After Effects", and the research behind the numbers (Japanese)
 - [`docs/mobile-strategy.md`](docs/mobile-strategy.md): API AI vs. Apple Intelligence, mobile, Remotion, Go (Japanese)
 - [`docs/edit-plan.schema.json`](docs/edit-plan.schema.json): edit plan schema
 - [`docs/language-strategy.md`](docs/language-strategy.md), [`docs/migration-plan.md`](docs/migration-plan.md), [`docs/roi.md`](docs/roi.md)

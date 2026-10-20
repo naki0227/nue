@@ -103,6 +103,19 @@ pub struct TimedText {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<CaptionStyle>,
+    /// Word timings (source seconds) for word-by-word captions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<WordTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WordTime {
+    pub text: String,
+    pub start: f64,
+    pub end: f64,
+    /// Separated from the previous word by a space (Latin text).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub space: bool,
 }
 
 /// An icon/sticker image from `data/icons/<asset>.png` laid over the video.
@@ -150,6 +163,12 @@ pub struct EditPlan {
     /// vertical (1080x1920, default) | horizontal (1920x1080) | square (1080x1080)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    /// Editing format: shorts | vlog | variety | cinematic | business | <custom>.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    /// Recording date of the source (YYYY-MM-DD), shown on vlog title cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bgm_path: Option<String>,
     pub cuts: Vec<Cut>,
@@ -178,6 +197,8 @@ impl EditPlan {
             original_filename: original_filename.to_string(),
             analyzer: Some(analyzer.to_string()),
             format: None,
+            style: None,
+            recorded_at: None,
             bgm_path: None,
             cuts: Vec::new(),
             editing_style: None,

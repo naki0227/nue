@@ -1,11 +1,15 @@
 mod assets;
+mod captions;
 mod gemini;
 mod jobs;
 mod local;
+mod look;
 mod media;
 mod meta;
+mod motion;
 mod plan;
 mod render;
+mod style;
 mod subtitles;
 
 use anyhow::{bail, Context, Result};
@@ -28,10 +32,12 @@ Usage:
   muscle run <video> [--out <video.mp4>] [options]       Analyze and render in one command
   muscle worker                                          Watch data/raw and run analyze -> render
   muscle watch                                           Watch data/json and render new plans
+  muscle styles                                          List editing formats
 
 Options:
   --analyzer <auto|local|gemini>   auto uses Gemini only when GEMINI_API_KEY is set (default: auto)
   --format <vertical|horizontal|square>
+  --style <shorts|vlog|variety|cinematic|business|name>   Editing format (data/styles/<name>.json for custom)
   --meta <file.json>               Job metadata (script, manual_instructions, options)
   --script <file.txt>              Notes; lines like \"00:00:15 - text\" become telops
   --no-bgm  --no-se  --no-subtitles  --no-jump-cut
@@ -39,10 +45,10 @@ Options:
 Environment:
   NUE_DATA_DIR        data directory (default /app/data or ./data)
   NUE_ANALYZER        default analyzer
+  NUE_STYLE           default editing format (shorts)
   NUE_WHISPER_MODEL   whisper.cpp ggml model for subtitles (or put ggml-*.bin in data/models)
   NUE_WHISPER_BIN     whisper.cpp CLI binary (default whisper-cli)
   NUE_LANGUAGE        speech language for subtitles (default auto)
-  NUE_FONT            font file for text
   GEMINI_API_KEY      enables the Gemini analyzer
 ";
 
@@ -70,6 +76,7 @@ fn parse_cli(args: &[String]) -> Result<Cli> {
             "--script" => cli.script = Some(PathBuf::from(value(arg)?)),
             "--analyzer" => cli.options.analyzer = Some(value(arg)?),
             "--format" => cli.options.format = Some(value(arg)?),
+            "--style" => cli.options.style = Some(value(arg)?),
             "--no-bgm" => cli.options.generate_bgm = Some(false),
             "--no-se" => cli.options.auto_sound_effects = Some(false),
             "--no-subtitles" => cli.options.subtitles = Some(false),
@@ -122,6 +129,11 @@ fn main() -> Result<()> {
         }
         "worker" => watch_raw_jobs()?,
         "watch" => watch_json_jobs()?,
+        "styles" => {
+            for s in style::list() {
+                println!("{}\t{}\t{}", s.name, s.label, s.description);
+            }
+        }
         "help" | "--help" | "-h" => print!("{}", USAGE),
         other => bail!("Unknown command: {}\n\n{}", other, USAGE),
     }
@@ -184,6 +196,7 @@ fn load_cli_metadata(cli: &Cli, input: &Path) -> Result<JobMetadata> {
     let flags = &cli.options;
     options.analyzer = flags.analyzer.clone().or(options.analyzer);
     options.format = flags.format.clone().or(options.format);
+    options.style = flags.style.clone().or(options.style);
     options.generate_bgm = flags.generate_bgm.or(options.generate_bgm);
     options.auto_sound_effects = flags.auto_sound_effects.or(options.auto_sound_effects);
     options.subtitles = flags.subtitles.or(options.subtitles);
@@ -232,6 +245,11 @@ fn analyze_video(
     set_status(&job_id, "analyzing", "Transcribing speech.", 25)?;
     let transcript = subtitles::transcribe(&raw_path, &work_dir, info.has_audio);
 
+    let style_name = options
+        .style
+        .clone()
+        .or_else(|| env::var("NUE_STYLE").ok())
+        .unwrap_or_else(|| "shorts".to_string());
     let analyzer = options
         .analyzer
         .clone()
@@ -293,6 +311,7 @@ fn analyze_video(
                 &signals,
                 transcript,
                 options.jump_cut != Some(false),
+                &style::load(Some(&style_name)),
             )
         }
     };

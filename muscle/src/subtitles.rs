@@ -2,7 +2,7 @@
 
 use crate::jobs::{data_path, log_json};
 use crate::media;
-use crate::plan::{format_time, parse_time, source_to_output, TimedText};
+use crate::plan::{format_time, parse_time, source_to_output, TimedText, WordTime};
 use anyhow::{bail, Context, Result};
 use std::env;
 use std::fs;
@@ -184,8 +184,13 @@ pub fn group_words(words: &[Word]) -> Vec<TimedText> {
     const MAX_GAP: f64 = 0.6;
     let mut lines = Vec::new();
     let mut text = String::new();
+    let mut timed: Vec<WordTime> = Vec::new();
     let (mut start, mut end) = (0.0, 0.0);
-    let flush = |text: &mut String, start: f64, end: f64, lines: &mut Vec<TimedText>| {
+    let flush = |text: &mut String,
+                 timed: &mut Vec<WordTime>,
+                 start: f64,
+                 end: f64,
+                 lines: &mut Vec<TimedText>| {
         let trimmed = text.trim();
         if !trimmed.is_empty() {
             lines.push(TimedText {
@@ -193,9 +198,11 @@ pub fn group_words(words: &[Word]) -> Vec<TimedText> {
                 end: format_time(end),
                 text: trimmed.to_string(),
                 style: None,
+                words: std::mem::take(timed),
             });
         }
         text.clear();
+        timed.clear();
     };
     for word in words {
         let piece = word.text.trim();
@@ -211,8 +218,14 @@ pub fn group_words(words: &[Word]) -> Vec<TimedText> {
             && (word.start - end > MAX_GAP
                 || units(&text) + units(joiner) + units(piece) > MAX_UNITS)
         {
-            flush(&mut text, start, end, &mut lines);
+            flush(&mut text, &mut timed, start, end, &mut lines);
         }
+        timed.push(WordTime {
+            text: piece.to_string(),
+            start: word.start,
+            end: word.end,
+            space: word.space_before && !text.is_empty(),
+        });
         if text.is_empty() {
             start = word.start;
             text.push_str(piece);
@@ -222,10 +235,10 @@ pub fn group_words(words: &[Word]) -> Vec<TimedText> {
         }
         end = word.end;
         if piece.ends_with(['。', '！', '？', '.', '!', '?']) {
-            flush(&mut text, start, end, &mut lines);
+            flush(&mut text, &mut timed, start, end, &mut lines);
         }
     }
-    flush(&mut text, start, end, &mut lines);
+    flush(&mut text, &mut timed, start, end, &mut lines);
     lines
 }
 
@@ -248,6 +261,7 @@ pub fn parse_srt(content: &str) -> Vec<TimedText> {
                 end: format_time(end),
                 text,
                 style: None,
+                words: Vec::new(),
             })
         })
         .collect()

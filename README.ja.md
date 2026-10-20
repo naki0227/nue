@@ -20,6 +20,7 @@
 
 | 機能 | 内容 | 必要なもの |
 | --- | --- | --- |
+| 編集フォーマット | `shorts` `vlog` `variety` `cinematic` `business`。After Effects風の文字アニメ（ポップ・バウンス・ぼかしイン・タイプライター・1語ずつハイライト）、カメラワークと転換（ズーム・ホイップ・グリッチ・ディップ）、ルック（フィルム調・ティール&オレンジ・粒子・にじみ・シネスコ帯）、タイトルカード、音の演出をフォーマットごとに。`data/styles/` で自作も可（[詳細](docs/editing-formats.md)） | なし |
 | ジャンプカット | 無音の間を検出して削除（前後に余白を残す） | なし |
 | 字幕生成 | 音声を文字起こしして焼き込み + `.srt` 書き出し | whisper.cppモデル（Docker版は同梱） |
 | テロップ | 台本の `00:00:15 - ここがポイント！` 形式の行や手動指定を、色付き・箱付きで表示 | なし |
@@ -90,13 +91,15 @@ muscle analyze <video> [--out plan.json] [options]   編集指示書を作る
 muscle render <plan.json> [--out video.mp4]          編集指示書から書き出す（手修正後の再書き出しにも）
 muscle run <video> [--out video.mp4] [options]       analyze -> render を一括
 muscle worker                                        data/raw を監視して自動処理（Docker既定）
+muscle styles                                        編集フォーマット一覧
 
 --analyzer auto|local|gemini   --format vertical|horizontal|square
+--style shorts|vlog|variety|cinematic|business|<data/styles/の名前>
 --script notes.txt             --meta job.json
 --no-bgm  --no-se  --no-subtitles  --no-jump-cut
 ```
 
-必要なもの: `ffmpeg` / `ffprobe`、日本語フォント（Noto Sans CJK推奨、`NUE_FONT` で指定可）。
+必要なもの: `ffmpeg` / `ffprobe`、日本語フォント（Noto Sans CJK推奨）。フォーマットで使うフォント（すべてOFL）は `muscle/scripts/fetch-fonts.sh` で `data/fonts` に取得できます（Docker版は同梱）。
 字幕を作るには [whisper.cpp](https://github.com/ggml-org/whisper.cpp) の `whisper-cli` とモデル（`data/models/ggml-*.bin` に置くか `NUE_WHISPER_MODEL` で指定）。動画と同じ名前の `.srt` を横に置けば、それを字幕として使います。
 
 | 環境変数 | 説明 |
@@ -105,7 +108,7 @@ muscle worker                                        data/raw を監視して自
 | `NUE_ANALYZER` | 既定の解析方法 `auto` / `local` / `gemini` |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Geminiを使う場合 |
 | `NUE_WHISPER_MODEL` / `NUE_WHISPER_BIN` / `NUE_LANGUAGE` | 字幕生成（言語の既定は `auto`、例: `ja`） |
-| `NUE_FONT` | テロップ・字幕のフォント |
+| `NUE_STYLE` | 既定の編集フォーマット（`shorts`） |
 | `NUE_X264_PRESET` / `NUE_CRF` | 画質と速度（既定 `medium` / `18`。速さ優先なら `veryfast`、さらに高画質なら `slow` や CRF `16`） |
 | `NUE_LOUDNESS` | 仕上がりの音量（既定 `-14` LUFS。YouTube・TikTok・Instagramの基準） |
 | `NUE_SHARPEN` | `1` で縦切り出しなどで拡大する場面に軽いシャープ処理 |
@@ -121,7 +124,7 @@ muscle worker                                        data/raw を監視して自
 ## ❓ トラブルシューティング
 
 - **字幕が出ない**: ログに `No whisper model found` が出ていればモデル未配置です。Docker版は `WHISPER_MODEL` を `none` 以外にして再ビルドしてください
-- **日本語が豆腐(□)になる**: 日本語フォントを入れるか `NUE_FONT` でフォントファイルを指定してください
+- **日本語が豆腐(□)になる / フォーマットのフォントにならない**: `muscle/scripts/fetch-fonts.sh` を実行するか、日本語フォントを `data/fonts` に置いてください
 - **Geminiでエラー**: 自動でローカル解析にフォールバックして書き出しは続きます。キーや無料枠を確認してください
 - **アップロードが進まない**: ディスク容量を確認してください（`docker system prune`）
 
@@ -135,11 +138,13 @@ muscle worker                                        data/raw を監視して自
 - [x] 効果音・アイコンアセット、横/正方形書き出し
 - [x] Webでの編集指示書タイムライン手修正（カット・テロップ・字幕・効果音・ズーム・アイコン）→ 再書き出し
 - [x] iOSアプリ（端末内で完結: Speech字幕 + Apple Intelligenceテロップ + AVFoundation書き出し、[ios/](ios/README.md)）
+- [x] After Effects風の編集フォーマット（Vlog・バラエティ・シネマティックなど。レンダラー側のみ、iOSアプリは未対応）
 
 今は作らないもの（[roi.md](docs/roi.md) の判断ライン参照）: ユーザー認証・マルチユーザー・課金。複数人で共有運用する段階になったら追加します。
 
 ## 🧭 設計ドキュメント
 
+- [`docs/editing-formats.md`](docs/editing-formats.md): 編集フォーマットとAEっぽさの正体、数値の根拠
 - [`docs/mobile-strategy.md`](docs/mobile-strategy.md): API AI / Apple Intelligence / スマホ化 / Remotion / Go の判断
 - [`docs/edit-plan.schema.json`](docs/edit-plan.schema.json): 編集指示書のスキーマ
 - [`docs/language-strategy.md`](docs/language-strategy.md): 言語構成の判断理由

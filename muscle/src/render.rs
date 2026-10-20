@@ -1,13 +1,19 @@
 //! FFmpeg renderer: edit plan -> finished video, thumbnail and SRT.
 //!
-//! Each cut is rendered as its own segment (reframe, zoom/pan, icons, text),
-//! then segments are concatenated and the soundtrack (voice, ducked BGM,
-//! sound effects) is mixed on the edited timeline.
+//! Each cut is rendered as its own segment in one encode: virtual camera
+//! (reframe, zooms, shake, transition moves), colour look, icons, animated
+//! ASS text, then edge transitions. Segments are concatenated and the
+//! soundtrack (voice, ducked BGM, sound effects, transition whooshes) is
+//! mixed on the edited timeline. The editing format (`style`) decides the
+//! look, motion, typography and sound.
 
 use crate::assets;
+use crate::captions;
 use crate::jobs::{data_path, log_json, update_job_status, JobUrls};
 use crate::media::{self, MediaInfo};
-use crate::plan::{format_time, parse_time, source_to_output, CaptionStyle, EditPlan, TimedText};
+use crate::motion::{Camera, Move, Transition};
+use crate::plan::{parse_time, source_to_output, EditPlan, TimedText};
+use crate::style::{self, Amount, Style};
 use crate::subtitles;
 use anyhow::{bail, Context, Result};
 use std::env;
@@ -47,7 +53,6 @@ pub fn output_fps(source: f64) -> &'static str {
 struct VideoSettings {
     frame: Frame,
     fps: &'static str,
-    fps_value: f64,
     /// Filters applied to the raw source before reframing (HDR tone mapping).
     source_filter: String,
     /// Mild sharpening when reframing enlarges the picture noticeably (opt-in:
@@ -78,62 +83,18 @@ impl VideoSettings {
         VideoSettings {
             frame,
             fps,
-            fps_value: fps
-                .split_once('/')
-                .and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?))
-                .or_else(|| fps.parse().ok())
-                .unwrap_or(30.0),
             source_filter,
             sharpen: enlargement > 1.15 && env::var("NUE_SHARPEN").is_ok_and(|v| v == "1"),
         }
     }
-
-    /// Scales and crops `[input]` to the frame at `zoom`, focused horizontally.
-    fn reframe(&self, input: &str, output: &str, x_expr: &str, zoom: f64) -> String {
-        let (w, h) = (self.frame.width, self.frame.height);
-        let even = |v: f64| ((v / 2.0).round() as u32) * 2;
-        let (zw, zh) = (even(w as f64 * zoom), even(h as f64 * zoom));
-        format!(
-            "[{input}]scale={zw}:{zh}:force_original_aspect_ratio=increase:flags=lanczos,\
-             crop={w}:{h}:x={}:y=(ih-oh)/2{}[{output}]",
-            quote(x_expr),
-            if self.sharpen { ",cas=0.35" } else { "" }
-        )
-    }
-}
-
-/// Source time until which a telop already shows this line (so the subtitle
-/// would only repeat it), or `None` when no telop does.
-fn repeated_until(plan: &EditPlan, line: &TimedText) -> Option<f64> {
-    let (Ok(start), Ok(end)) = (parse_time(&line.start), parse_time(&line.end)) else {
-        return None;
-    };
-    plan.telops
-        .iter()
-        .filter_map(|telop| {
-            let shown = telop.text.trim_end_matches('…');
-            let (s, e) = (parse_time(&telop.start).ok()?, parse_time(&telop.end).ok()?);
-            (s < end && e > start && !shown.is_empty() && line.text.trim().starts_with(shown))
-                .then_some(e)
-        })
-        .reduce(f64::max)
 }
 
 /// Text box width in characters: Latin glyphs are wider than half a CJK glyph.
-fn max_units(width: f64, font_size: u32, text: &str) -> usize {
+pub(crate) fn max_units(width: f64, font_size: u32, text: &str) -> usize {
     let total = text.chars().count().max(1);
     let ascii = text.chars().filter(|c| c.is_ascii()).count();
     let unit = if ascii * 2 > total { 0.6 } else { 0.5 };
     (width / (font_size as f64 * unit)) as usize
-}
-
-/// Slow push-in amount for long takes.
-const PUSH_IN: f64 = 1.06;
-
-/// Crop offset that centers the subject (`center`, 0..1 of the scaled width)
-/// in the frame without leaving the picture.
-fn crop_x(center: &str) -> String {
-    format!("clip(iw*({center})-ow/2,0,iw-ow)")
 }
 
 /// Encoder settings: visually lossless H.264 tagged as BT.709.
@@ -188,15 +149,6 @@ impl Frame {
             },
         }
     }
-
-    fn is_landscape(&self) -> bool {
-        self.width > self.height
-    }
-
-    /// Font size scaled to the short edge of the frame.
-    fn font(&self, base_at_1080: f64) -> u32 {
-        (base_at_1080 * self.width.min(self.height) as f64 / 1080.0).round() as u32
-    }
 }
 
 pub struct RenderOutput {
@@ -209,19 +161,6 @@ pub struct RenderOutput {
 /// Quotes a value for an ffmpeg filtergraph option.
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\\', "/").replace('\'', "'\\''"))
-}
-
-fn color(name: Option<&str>) -> &'static str {
-    match name.unwrap_or("white").to_lowercase().as_str() {
-        "yellow" => "#FFE14D",
-        "cyan" | "blue" => "#4DE8FF",
-        "red" => "#FF4D4D",
-        "pink" => "#FF6FB5",
-        "green" => "#5CFF8D",
-        "orange" => "#FFA53D",
-        "black" => "#111111",
-        _ => "white",
-    }
 }
 
 /// Character width in half-width units (CJK and other wide glyphs count 2).
@@ -294,92 +233,6 @@ pub fn wrap_text(text: &str, max_units: usize, max_lines: usize) -> String {
     lines.join("\n")
 }
 
-struct TextLayer {
-    text: String,
-    font_size: u32,
-    color: &'static str,
-    y: String,
-    boxed: bool,
-    border: u32,
-    window: Option<(f64, f64)>,
-}
-
-fn text_layer_y(position: Option<&str>, frame: Frame) -> String {
-    match position.unwrap_or("bottom") {
-        "top" => "h*0.13".to_string(),
-        "center" | "middle" => "(h-text_h)/2".to_string(),
-        _ if frame.is_landscape() => "h*0.80-text_h".to_string(),
-        _ => "h*0.66-text_h".to_string(),
-    }
-}
-
-fn styled_layer(
-    text: &str,
-    style: Option<&CaptionStyle>,
-    frame: Frame,
-    window: Option<(f64, f64)>,
-) -> TextLayer {
-    let large = style.and_then(|s| s.size.as_deref()) == Some("large");
-    let font_size = frame.font(if large { 116.0 } else { 84.0 });
-    let max_units = max_units(frame.width as f64 * 0.88, font_size, text);
-    TextLayer {
-        text: wrap_text(text, max_units, if large { 2 } else { 3 }),
-        font_size,
-        color: color(style.and_then(|s| s.color.as_deref())),
-        y: text_layer_y(style.and_then(|s| s.position.as_deref()), frame),
-        boxed: style.and_then(|s| s.start_box).unwrap_or(false),
-        border: (font_size / if large { 10 } else { 14 }).max(2),
-        window,
-    }
-}
-
-/// Speech subtitles: bold white with a heavy outline (Japanese YouTube style),
-/// readable on any background without a box hiding the picture.
-fn subtitle_layer(text: &str, frame: Frame, window: (f64, f64)) -> TextLayer {
-    let font_size = frame.font(72.0);
-    let max_units = max_units(frame.width as f64 * 0.9, font_size, text);
-    TextLayer {
-        text: wrap_text(text, max_units, 2),
-        font_size,
-        color: "white",
-        y: if frame.is_landscape() {
-            "h*0.95-text_h".to_string()
-        } else {
-            "h*0.84-text_h".to_string()
-        },
-        boxed: false,
-        border: (font_size / 7).max(3),
-        window: Some(window),
-    }
-}
-
-fn drawtext(layer: &TextLayer, text_file: &Path) -> String {
-    let mut filter = format!(
-        "drawtext=fontfile={}:textfile={}:expansion=none:fontsize={}:fontcolor={}:\
-         borderw={}:bordercolor=black@0.9:line_spacing={}:x=(w-text_w)/2:y={}",
-        quote(assets::font_path()),
-        quote(&text_file.to_string_lossy()),
-        layer.font_size,
-        layer.color,
-        layer.border,
-        layer.font_size / 5,
-        quote(&layer.y),
-    );
-    if layer.boxed {
-        filter.push_str(&format!(
-            ":box=1:boxcolor=black@0.55:boxborderw={}",
-            layer.font_size / 4
-        ));
-    }
-    if let Some((a, b)) = layer.window {
-        filter.push_str(&format!(
-            ":enable={}",
-            quote(&format!("between(t,{:.3},{:.3})", a, b))
-        ));
-    }
-    filter
-}
-
 /// Clips a source-time window to a cut and converts it to segment-local time.
 fn local_window(
     start: &str,
@@ -407,26 +260,35 @@ fn overlay_xy(position: Option<&str>) -> (&'static str, &'static str) {
     }
 }
 
-struct Segment<'a> {
+struct Segment {
     index: usize,
     range: (f64, f64),
     focus: f64,
-    caption: Option<(&'a str, Option<&'a CaptionStyle>)>,
+    camera: Camera,
 }
 
-fn render_segment(
-    plan: &EditPlan,
-    segment: &Segment,
-    video_path: &Path,
-    has_audio: bool,
-    video: &VideoSettings,
-    work_dir: &Path,
-) -> Result<PathBuf> {
+/// Everything shared by all segments of one render.
+struct RenderContext<'a> {
+    plan: &'a EditPlan,
+    style: &'a Style,
+    video: VideoSettings,
+    info: MediaInfo,
+    video_path: PathBuf,
+    work_dir: PathBuf,
+    /// Colour grade as a .cube LUT, when the format has one.
+    lut: Option<PathBuf>,
+}
+
+fn fonts_dir() -> String {
+    data_path("fonts").to_string_lossy().to_string()
+}
+
+fn render_segment(ctx: &RenderContext, segment: &Segment) -> Result<PathBuf> {
+    let (plan, video, frame) = (ctx.plan, &ctx.video, ctx.video.frame);
     let (cut_start, cut_end) = segment.range;
     let duration = cut_end - cut_start;
     // Matroska with PCM audio: the only lossy audio encode happens once, at the end.
-    let segment_path = work_dir.join(format!("seg_{:04}.mkv", segment.index));
-    let frame = video.frame;
+    let segment_path = ctx.work_dir.join(format!("seg_{:04}.mkv", segment.index));
     let w = frame.width;
 
     let mut cmd = Command::new("ffmpeg");
@@ -436,13 +298,11 @@ fn render_segment(
         .arg("-t")
         .arg(format!("{:.3}", duration))
         .arg("-i")
-        .arg(video_path);
+        .arg(&ctx.video_path);
     let mut next_input = 1;
 
-    // Reframe around the subject (focus = its horizontal center); pans move
-    // that center over time.
+    // Subject center (0..1); pans move it over time.
     let mut center = format!("{:.3}", segment.focus);
-    let mut panned = false;
     for effect in &plan.visual_effects {
         let direction = match effect.effect_type.as_str() {
             "pan_right" => 1.0,
@@ -451,7 +311,6 @@ fn render_segment(
         };
         if let Some((a, b)) = local_window(&effect.start, effect.end.as_deref(), 2.0, segment.range)
         {
-            panned = true;
             center = format!(
                 "if(lt(t,{a:.3}),{center},{f:.3}+{d}*0.35*min((t-{a:.3})/{len:.3},1))",
                 f = segment.focus,
@@ -460,73 +319,40 @@ fn render_segment(
             );
         }
     }
-    let x_expr = crop_x(&center);
-    // Zoomed views are cut from the full-resolution source, not by enlarging the
-    // already-reframed picture, so punch-ins stay sharp.
-    let zooms: Vec<(f64, f64, f64)> = plan
-        .visual_effects
-        .iter()
-        .filter_map(|effect| {
-            let zoom = match effect.effect_type.as_str() {
-                "zoom_in" => 1.25,
-                "zoom_out" => 1.1,
-                // Alternate framing between jump cuts.
-                "punch_in" => 1.12,
-                _ => return None,
-            };
-            local_window(&effect.start, effect.end.as_deref(), 1.5, segment.range)
-                .map(|(a, b)| (zoom, a, b))
-        })
-        .collect();
-    let branches = (0..=zooms.len())
-        .map(|i| format!("[s{i}]"))
-        .collect::<String>();
+
+    // 1) Camera: one per-frame scale + crop from the source.
+    let look = &ctx.style.look;
     let mut graph = vec![format!(
-        "[0:v]{}fps={},setsar=1,split={}{branches}",
+        "[0:v]{}fps={},setsar=1,{}{}[cam]",
         video.source_filter,
         video.fps,
-        zooms.len() + 1
+        segment.camera.filter(
+            (frame.width, frame.height),
+            ctx.info.display_size(),
+            &center
+        ),
+        if video.sharpen { ",cas=0.35" } else { "" },
     )];
-    // Long takes: a slow 6% push-in over the whole cut. The source is reframed
-    // 6% larger first so the push never enlarges pixels.
-    let push_in = !panned
-        && plan.visual_effects.iter().any(|e| {
-            e.effect_type == "push_in"
-                && local_window(&e.start, e.end.as_deref(), duration, segment.range)
-                    .is_some_and(|(a, b)| b - a > duration * 0.8)
-        });
-    if push_in {
-        let frames = (duration * video.fps_value).round().max(1.0);
-        graph.push(video.reframe("s0", "pz", &x_expr, PUSH_IN));
+    // 2) Look: LUT grade, glow, then vignette / grain / letterbox.
+    let mut current = "cam".to_string();
+    if let Some(lut) = &ctx.lut {
         graph.push(format!(
-            "[pz]zoompan=z='1+{d}*min(on/{frames},1)':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':\
-             d=1:s={w}x{h}:fps={fps},setsar=1[v0]",
-            d = PUSH_IN - 1.0,
-            w = frame.width,
-            h = frame.height,
-            fps = video.fps,
+            "[cam]lut3d=file={}:interp=tetrahedral[graded]",
+            quote(&lut.to_string_lossy())
         ));
-    } else {
-        graph.push(video.reframe("s0", "v0", &x_expr, 1.0));
+        current = "graded".to_string();
     }
+    if let Some(glow) = look.glow_graph(&current, "glowed", w) {
+        graph.push(glow);
+        current = "glowed".to_string();
+    }
+    graph.push(format!(
+        "[{current}]{}null[v0]",
+        look.filters(None, frame.width, frame.height)
+    ));
     let mut label = 0;
-    let focus_expr = crop_x(&format!("{:.3}", segment.focus));
-    for (i, (zoom, a, b)) in zooms.iter().enumerate() {
-        graph.push(video.reframe(
-            &format!("s{}", i + 1),
-            &format!("z{label}"),
-            &focus_expr,
-            *zoom,
-        ));
-        graph.push(format!(
-            "[v{l}][z{l}]overlay=enable={}[v{n}]",
-            quote(&format!("between(t,{a:.3},{b:.3})")),
-            l = label,
-            n = label + 1,
-        ));
-        label += 1;
-    }
 
+    // 3) Icons, popping in and out.
     for overlay in &plan.overlays {
         let Some((a, b)) = local_window(&overlay.start, Some(&overlay.end), 1.0, segment.range)
         else {
@@ -547,8 +373,12 @@ fn render_segment(
             .arg(icon);
         let icon_w = (w as f64 * overlay.scale.unwrap_or(0.18).clamp(0.05, 0.8)).round() as u32;
         let (x, y) = overlay_xy(overlay.position.as_deref());
+        let fade = 0.15f64.min((b - a) / 3.0);
         graph.push(format!(
-            "[{input}:v]scale={icon_w}:-1,format=rgba[i{l}];[v{l}][i{l}]overlay=x={x}:y={y}:eof_action=pass:enable={}[v{n}]",
+            "[{input}:v]scale={icon_w}:-1,format=rgba,fade=t=in:st={a:.3}:d={fade:.3}:alpha=1,\
+             fade=t=out:st={:.3}:d={fade:.3}:alpha=1[i{l}];\
+             [v{l}][i{l}]overlay=x={x}:y={y}:eof_action=pass:enable={}[v{n}]",
+            (b - fade).max(a),
             quote(&format!("between(t,{a:.3},{b:.3})")),
             input = next_input,
             l = label,
@@ -558,47 +388,20 @@ fn render_segment(
         label += 1;
     }
 
-    let mut layers = Vec::new();
-    if let Some((text, style)) = segment.caption {
-        layers.push(styled_layer(text, style, frame, None));
-    }
-    for telop in &plan.telops {
-        if let Some(window) = local_window(&telop.start, Some(&telop.end), 3.0, segment.range) {
-            layers.push(styled_layer(
-                &telop.text,
-                telop.style.as_ref(),
-                frame,
-                Some(window),
-            ));
-        }
-    }
-    if plan.options.subtitles {
-        for line in &plan.subtitles {
-            // While a telop shows the same words, hold the subtitle back.
-            let start = match repeated_until(plan, line) {
-                Some(until) => format_time(until.max(parse_time(&line.start).unwrap_or(0.0))),
-                None => line.start.clone(),
-            };
-            if let Some(window) = local_window(&start, Some(&line.end), 2.0, segment.range)
-                .filter(|(a, b)| b - a >= 0.3)
-            {
-                layers.push(subtitle_layer(&line.text, frame, window));
-            }
-        }
-    }
-    let mut text_filters = Vec::new();
-    for (i, layer) in layers.iter().enumerate() {
-        let text_file = work_dir.join(format!("seg_{:04}_text_{:03}.txt", segment.index, i));
-        fs::write(&text_file, &layer.text)?;
-        text_filters.push(drawtext(layer, &text_file));
-    }
-    if text_filters.is_empty() {
-        graph.push(format!("[v{label}]null[vout]"));
-    } else {
-        graph.push(format!("[v{label}]{}[vout]", text_filters.join(",")));
-    }
+    // 4) Animated text (libass), then 5) transition effects over everything,
+    //    like an adjustment layer.
+    let script =
+        captions::segment_script(plan, ctx.style, segment.range, (frame.width, frame.height));
+    let script_path = ctx.work_dir.join(format!("seg_{:04}.ass", segment.index));
+    fs::write(&script_path, script)?;
+    graph.push(format!(
+        "[v{label}]ass=filename={}:fontsdir={},{}null[vout]",
+        quote(&script_path.to_string_lossy()),
+        quote(&fonts_dir()),
+        segment.camera.edge_filters(w),
+    ));
 
-    let audio_map = if has_audio {
+    let audio_map = if ctx.info.has_audio {
         let fade_out = (duration - CUT_FADE).max(0.0);
         graph.push(format!(
             "[0:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:{duration:.3},\
@@ -635,8 +438,76 @@ fn render_segment(
     Ok(segment_path)
 }
 
+/// Builds each segment's camera: moves from the plan's visual effects, and
+/// transitions from the format (opening, ending, scene changes, jump cuts).
+fn cameras(plan: &EditPlan, style: &Style, ranges: &[(f64, f64)], frame: Frame) -> Vec<Camera> {
+    let rules = &style.transitions;
+    let boundary = |a: usize, b: usize| {
+        let scene = ranges[b].0 - ranges[a].1 > 1.5;
+        (if scene { rules.scene } else { rules.jump }, rules.duration)
+    };
+    let count = ranges.len();
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(i, range)| {
+            let duration = range.1 - range.0;
+            let mut moves = Vec::new();
+            for effect in &plan.visual_effects {
+                let Some((a, b)) = local_window(&effect.start, effect.end.as_deref(), 1.5, *range)
+                else {
+                    continue;
+                };
+                moves.push(match effect.effect_type.as_str() {
+                    "punch_in" => Move::Punch(style.edit.punch_amount),
+                    "push_in" => Move::Push(1.06),
+                    "zoom_in" => Move::Zoom {
+                        amount: if style.edit.emphasis_zoom > 1.0 {
+                            style.edit.emphasis_zoom
+                        } else {
+                            1.25
+                        },
+                        start: a,
+                        end: b,
+                    },
+                    "zoom_out" => Move::Zoom {
+                        amount: 1.1,
+                        start: a,
+                        end: b,
+                    },
+                    "shake" => Move::Shake {
+                        amplitude: frame.width.min(frame.height) as f64 * 0.02,
+                        start: a,
+                        end: b,
+                    },
+                    _ => continue,
+                });
+            }
+            let enter = if i == 0 {
+                (rules.opening, rules.opening_duration)
+            } else {
+                boundary(i - 1, i)
+            };
+            let exit = if i + 1 == count {
+                (rules.ending, rules.ending_duration)
+            } else {
+                boundary(i, i + 1)
+            };
+            // Never let transitions eat more than 40% of a short cut each.
+            let clamp = |(t, d): (Transition, f64)| (t, d.min(duration * 0.4));
+            Camera {
+                duration,
+                moves,
+                enter: clamp(enter),
+                exit: clamp(exit),
+            }
+        })
+        .collect()
+}
+
 fn mix_and_concat(
     plan: &EditPlan,
+    style: &Style,
     segments: &[PathBuf],
     ranges: &[(f64, f64)],
     has_audio: bool,
@@ -677,7 +548,11 @@ fn mix_and_concat(
     ])
     .arg(&concat_file);
 
-    let mood = plan.editing_style.as_ref().and_then(|s| s["mood"].as_str());
+    let mood = plan
+        .editing_style
+        .as_ref()
+        .and_then(|s| s["mood"].as_str())
+        .or(style.audio.bgm_mood.as_deref());
     let bgm = if plan.options.bgm {
         assets::bgm(plan.bgm_path.as_deref(), mood)
     } else {
@@ -706,8 +581,36 @@ fn mix_and_concat(
                 break;
             }
         }
+        // Whooshes peak on the first frame of the next shot, so they start
+        // just before camera transitions.
+        let moving =
+            |t: Transition| matches!(t, Transition::Zoom | Transition::Whip | Transition::Glitch);
+        let whoosh = assets::sound_effect("whoosh").filter(|path| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem.to_lowercase().contains("whoosh"))
+        });
+        if let Some(whoosh) =
+            whoosh.filter(|_| style.transitions.whoosh && style.edit.sound_effects != Amount::None)
+        {
+            let mut at = 0.0;
+            for pair in ranges.windows(2) {
+                at += pair[0].1 - pair[0].0;
+                let scene = pair[1].0 - pair[0].1 > 1.5;
+                let transition = if scene {
+                    style.transitions.scene
+                } else {
+                    style.transitions.jump
+                };
+                if moving(transition) && sound_effects.len() < MAX_SOUND_EFFECTS {
+                    sound_effects.push(((at - 0.2f64).max(0.0), whoosh.clone()));
+                }
+            }
+        }
     }
 
+    let bgm_volume = style.audio.bgm_volume;
+    let se_volume = style.audio.sound_effect_volume;
     let mut filters = Vec::new();
     let mut mix_inputs = vec!["[voice]".to_string()];
     let mut next_input = 1;
@@ -726,13 +629,14 @@ fn mix_and_concat(
             // Duck the music under speech.
             filters.push(format!("[0:a]{voice_chain},asplit=2[voice][sc]"));
             filters.push(format!(
-                "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.25[bgmraw];\
+                "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,volume={bgm_volume}[bgmraw];\
                  [bgmraw][sc]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=400[bgm]"
             ));
         } else {
             filters.push("[0:a]anull[voice]".to_string());
             filters.push(format!(
-                "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.4[bgm]"
+                "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,volume={}[bgm]",
+                (bgm_volume * 1.6).min(1.0)
             ));
         }
         mix_inputs.push("[bgm]".to_string());
@@ -745,7 +649,7 @@ fn mix_and_concat(
         cmd.arg("-i").arg(path);
         let ms = (at * 1000.0).round() as i64;
         filters.push(format!(
-            "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,adelay={ms}:all=1,volume=0.7[se{next_input}]"
+            "[{next_input}:a]aresample=48000,aformat=channel_layouts=stereo,adelay={ms}:all=1,volume={se_volume}[se{next_input}]"
         ));
         mix_inputs.push(format!("[se{next_input}]"));
         next_input += 1;
@@ -878,46 +782,43 @@ fn parse_loudnorm(log: &str) -> Option<LoudnessStats> {
     (stats.input_i > -70.0).then_some(stats)
 }
 
-fn render_thumbnail(
-    plan: &EditPlan,
-    video_path: &Path,
-    video: &VideoSettings,
-    work_dir: &Path,
-    out: &Path,
-) -> Result<()> {
-    let frame = video.frame;
-    let Some(thumb) = &plan.thumbnail else {
+fn render_thumbnail(ctx: &RenderContext, out: &Path) -> Result<()> {
+    let Some(thumb) = &ctx.plan.thumbnail else {
         bail!("No thumbnail in plan");
     };
     let at = parse_time(&thumb.timestamp).unwrap_or(0.0);
-    let (w, h) = (frame.width, frame.height);
+    let frame = ctx.video.frame;
+    let still = Camera {
+        duration: 1.0,
+        moves: Vec::new(),
+        enter: (Transition::Cut, 0.0),
+        exit: (Transition::Cut, 0.0),
+    };
     let mut filter = format!(
-        "{}scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},\
-         eq=saturation=1.25:contrast=1.08",
-        video.source_filter
+        "{}{}",
+        ctx.video.source_filter,
+        still.filter((frame.width, frame.height), ctx.info.display_size(), "0.5")
     );
+    if let Some(lut) = &ctx.lut {
+        filter.push_str(&format!(",lut3d=file={}", quote(&lut.to_string_lossy())));
+    }
+    filter.push_str(",eq=saturation=1.15:contrast=1.05");
     if !thumb.text.trim().is_empty() {
-        let font_size = frame.font(140.0);
-        let max_units = max_units(w as f64 * 0.88, font_size, &thumb.text);
-        let layer = TextLayer {
-            text: wrap_text(&thumb.text, max_units, 3),
-            font_size,
-            color: color(thumb.color.as_deref()),
-            y: "(h-text_h)/2".to_string(),
-            boxed: false,
-            border: (font_size / 9).max(4),
-            window: None,
-        };
-        let text_file = work_dir.join("thumbnail.txt");
-        fs::write(&text_file, &layer.text)?;
-        filter.push(',');
-        filter.push_str(&drawtext(&layer, &text_file));
+        let script =
+            captions::thumbnail_script(ctx.style, &thumb.text, (frame.width, frame.height));
+        let path = ctx.work_dir.join("thumbnail.ass");
+        fs::write(&path, script)?;
+        filter.push_str(&format!(
+            ",ass=filename={}:fontsdir={}",
+            quote(&path.to_string_lossy()),
+            quote(&fonts_dir())
+        ));
     }
     let output = Command::new("ffmpeg")
         .args(["-y", "-hide_banner", "-loglevel", "error", "-ss"])
         .arg(format!("{:.3}", at))
         .arg("-i")
-        .arg(video_path)
+        .arg(&ctx.video_path)
         .arg("-vf")
         .arg(filter)
         .args(["-frames:v", "1", "-q:v", "2"])
@@ -992,15 +893,52 @@ fn render_plan_inner(plan: &EditPlan, stem: &str, job_id: &str) -> Result<Render
         video_path.to_str(),
     );
 
-    let cuts: Vec<_> = plan
+    let style = style::load(plan.style.as_deref());
+    let lut = if style.look.grade.is_identity() {
+        None
+    } else {
+        let path = work_dir.join("look.cube");
+        style.look.grade.write_cube(&path, 33)?;
+        Some(path)
+    };
+
+    // Legacy per-cut captions become telops so they share the format's text styling.
+    let usable: Vec<_> = plan
         .cuts
         .iter()
         .filter(|cut| {
             matches!((parse_time(&cut.start_time), parse_time(&cut.end_time)), (Ok(s), Ok(e)) if (e.min(info.duration) - s.min(info.duration)) > 0.05)
         })
         .collect();
+    let mut plan = plan.clone();
+    for cut in &usable {
+        if let Some(text) = cut.caption.as_deref().filter(|c| !c.trim().is_empty()) {
+            plan.telops.push(TimedText {
+                start: cut.start_time.clone(),
+                end: cut.end_time.clone(),
+                text: text.to_string(),
+                style: Some(cut.caption_style.clone().unwrap_or_default()),
+                words: Vec::new(),
+            });
+        }
+    }
+    let focus: Vec<f64> = usable
+        .iter()
+        .map(|cut| cut.focus_point.unwrap_or(0.5).clamp(0.0, 1.0))
+        .collect();
+
+    let ctx = RenderContext {
+        plan: &plan,
+        style: &style,
+        video,
+        info,
+        video_path,
+        work_dir: work_dir.clone(),
+        lut,
+    };
+    let cams = cameras(&plan, &style, &ranges, frame);
     let mut segments = Vec::new();
-    for (index, (cut, range)) in cuts.iter().zip(&ranges).enumerate() {
+    for (index, (range, camera)) in ranges.iter().zip(cams).enumerate() {
         let progress = 70 + (index * 20 / ranges.len()) as i32;
         update_job_status(
             job_id,
@@ -1012,38 +950,28 @@ fn render_plan_inner(plan: &EditPlan, stem: &str, job_id: &str) -> Result<Render
         let segment = Segment {
             index,
             range: *range,
-            focus: cut.focus_point.unwrap_or(0.5).clamp(0.0, 1.0),
-            caption: cut
-                .caption
-                .as_deref()
-                .filter(|c| !c.trim().is_empty())
-                .map(|c| (c, cut.caption_style.as_ref())),
+            focus: focus.get(index).copied().unwrap_or(0.5),
+            camera,
         };
-        segments.push(render_segment(
-            plan,
-            &segment,
-            &video_path,
-            info.has_audio,
-            &video,
-            &work_dir,
-        )?);
+        segments.push(render_segment(&ctx, &segment)?);
     }
 
     update_job_status(job_id, "rendering", "Mixing audio", 92, JobUrls::default())?;
     let output_name = format!("{}_edited.mp4", stem);
     let output_path = output_dir.join(&output_name);
     mix_and_concat(
-        plan,
+        &plan,
+        &style,
         &segments,
         &ranges,
-        info.has_audio,
+        ctx.info.has_audio,
         &work_dir,
         &output_path,
     )?;
 
     let thumb_name = format!("{}_thumb.jpg", stem);
     let thumb_path = output_dir.join(&thumb_name);
-    let thumbnail = match render_thumbnail(plan, &video_path, &video, &work_dir, &thumb_path) {
+    let thumbnail = match render_thumbnail(&ctx, &thumb_path) {
         Ok(()) => Some(thumb_path),
         Err(error) => {
             log_json(
@@ -1068,7 +996,7 @@ fn render_plan_inner(plan: &EditPlan, stem: &str, job_id: &str) -> Result<Render
 
     let plan_name = format!("{}_plan.json", stem);
     let plan_path = output_dir.join(&plan_name);
-    fs::write(&plan_path, serde_json::to_string_pretty(plan)?)?;
+    fs::write(&plan_path, serde_json::to_string_pretty(&plan)?)?;
 
     let output_url = format!("/output/{}", output_name);
     let thumb_url = format!("/output/{}", thumb_name);
@@ -1176,6 +1104,5 @@ mod tests {
                 height: 1920
             }
         );
-        assert_eq!(Frame::for_format(Some("horizontal")).font(84.0), 84);
     }
 }

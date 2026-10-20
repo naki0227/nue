@@ -44,3 +44,7 @@ ios/Nue.xcodeproj/
 ios/NueApp/Info.plist
 ios/NueKit/.build/
 ios/build/
+
+# Fonts are downloaded by muscle/scripts/fetch-fonts.sh (SIL OFL); not committed.
+data/fonts/*
+!data/fonts/README.md

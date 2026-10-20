@@ -1,54 +1,8 @@
 //! Lookup of bundled fonts, sound effects, BGM and icon assets under `data/`.
 
-use crate::jobs::{data_path, log_json};
-use std::env;
+use crate::jobs::data_path;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
-
-const FONT_CANDIDATES: &[&str] = &[
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
-    "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
-    "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-    "/System/Library/Fonts/Hiragino Sans GB.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-];
-
-/// Font used for captions, subtitles and thumbnails. `NUE_FONT` wins, then a
-/// bundled `data/fonts/*.ttf|otf|ttc`, then well-known system fonts.
-pub fn font_path() -> &'static str {
-    static FONT: OnceLock<String> = OnceLock::new();
-    FONT.get_or_init(|| {
-        if let Ok(font) = env::var("NUE_FONT") {
-            return font;
-        }
-        let bundled = list_files(&data_path("fonts"), &["ttf", "otf", "ttc"]);
-        if let Some((_, path)) = bundled.into_iter().next() {
-            return path.to_string_lossy().to_string();
-        }
-        if let Some(found) = FONT_CANDIDATES.iter().find(|p| Path::new(p).exists()) {
-            return found.to_string();
-        }
-        let fc = Command::new("fc-match")
-            .args(["-f", "%{file}", "sans:bold:lang=ja"])
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .filter(|path| !path.is_empty());
-        fc.unwrap_or_else(|| {
-            log_json(
-                "WARN",
-                "No font found; set NUE_FONT",
-                Some("font_missing"),
-                None,
-            );
-            FONT_CANDIDATES[0].to_string()
-        })
-    })
-}
 
 fn list_files(dir: &Path, extensions: &[&str]) -> Vec<(String, PathBuf)> {
     let mut files: Vec<(String, PathBuf)> = fs::read_dir(dir)

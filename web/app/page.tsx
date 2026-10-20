@@ -59,6 +59,17 @@ interface OutputLinks {
 type Analyzer = "auto" | "local" | "gemini";
 type VideoFormat = "vertical" | "horizontal" | "square";
 
+type EditStyle = "shorts" | "vlog" | "variety" | "cinematic" | "business";
+
+// Editing formats rendered by muscle (see docs/editing-formats.md).
+const EDIT_STYLES: { id: EditStyle; name: string; description: string; format: VideoFormat }[] = [
+  { id: "shorts", name: "Shorts", description: "1語ずつ光る字幕・ズーム・つかみ", format: "vertical" },
+  { id: "vlog", name: "Vlog", description: "フィルム調・日付入りタイトル・ゆったり", format: "horizontal" },
+  { id: "variety", name: "Variety", description: "二重フチ文字・効果音・揺れ", format: "vertical" },
+  { id: "cinematic", name: "Cinematic", description: "シネスコ・ティール&オレンジ・明朝", format: "horizontal" },
+  { id: "business", name: "Business", description: "読みやすい帯字幕・落ち着いた切替", format: "horizontal" },
+];
+
 export default function Home() {
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -79,6 +90,7 @@ export default function Home() {
   const [jumpCut, setJumpCut] = useState(true);
   const [analyzer, setAnalyzer] = useState<Analyzer>("auto");
   const [videoFormat, setVideoFormat] = useState<VideoFormat>("vertical");
+  const [editStyle, setEditStyle] = useState<EditStyle>("shorts");
 
   // Manual instructions state
   const [manualCuts, setManualCuts] = useState<ManualCut[]>([]);
@@ -139,6 +151,7 @@ export default function Home() {
         jump_cut: jumpCut,
         analyzer,
         format: videoFormat,
+        style: editStyle,
       },
     };
 
@@ -414,6 +427,31 @@ export default function Home() {
             </div>
           )}
         </main>
+
+        {/* Editing format */}
+        {status === "idle" && (
+          <div className="mt-6 grid grid-cols-2 sm:grid-cols-5 gap-2" role="radiogroup" aria-label="Editing format">
+            {EDIT_STYLES.map((style) => (
+              <button
+                key={style.id}
+                role="radio"
+                aria-checked={editStyle === style.id}
+                onClick={() => {
+                  setEditStyle(style.id);
+                  setVideoFormat(style.format);
+                }}
+                className={`text-left px-3 py-3 rounded-xl border transition-colors ${
+                  editStyle === style.id
+                    ? "border-purple-500 bg-purple-500/15"
+                    : "border-white/10 bg-white/5 hover:bg-white/10"
+                }`}
+              >
+                <span className="block text-sm font-semibold text-gray-100">{style.name}</span>
+                <span className="block text-xs text-gray-400 mt-1">{style.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Advanced Options */}
         {status === "idle" && (

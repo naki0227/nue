@@ -59,6 +59,9 @@ pub struct JobOptions {
     /// Remove silent pauses (jump cuts). Local analyzer only.
     #[serde(default)]
     pub jump_cut: Option<bool>,
+    /// Editing format: shorts | vlog | variety | cinematic | business | <custom>.
+    #[serde(default)]
+    pub style: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -143,6 +146,9 @@ pub fn apply_metadata(plan: &mut EditPlan, meta: &JobMetadata, duration: f64) {
     if let Some(format) = options.format.filter(|f| !f.is_empty()) {
         plan.format = Some(format);
     }
+    if let Some(style) = options.style.filter(|s| !s.is_empty()) {
+        plan.style = Some(style);
+    }
 
     let manual = meta.manual_instructions.clone().unwrap_or_default();
 
@@ -202,6 +208,7 @@ pub fn apply_metadata(plan: &mut EditPlan, meta: &JobMetadata, duration: f64) {
                 end: format_time(start + c.duration.unwrap_or(3.0)),
                 text: c.text.trim().to_string(),
                 style: Some(style_for(c.style.as_deref())),
+                words: Vec::new(),
             })
         })
         .collect();
@@ -217,6 +224,7 @@ pub fn apply_metadata(plan: &mut EditPlan, meta: &JobMetadata, duration: f64) {
                 end: format_time(end),
                 text: text.clone(),
                 style: Some(style_for(None)),
+                words: Vec::new(),
             });
         }
     }
