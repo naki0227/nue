@@ -210,33 +210,47 @@ impl Writer {
         if end - start < 0.05 || text.trim().is_empty() {
             return;
         }
-        let m = metrics(style, self.frame);
         let text = if style.uppercase {
             text.to_uppercase()
         } else {
             text.to_string()
         };
-        let wrapped = wrap_text(
-            &text,
-            max_units(self.frame.0 as f64 * 0.86, m.size as u32, &text),
-            style.max_lines.max(1),
-        );
+        // Long text shrinks (down to 60%) instead of being cut off with "…".
+        let width = self.frame.0 as f64 * 0.86;
+        let lines = style.max_lines.max(1);
+        let fit = fit_scale(&text, width, metrics(style, self.frame).size, lines);
+        let scaled = TextStyle {
+            size: style.size * fit,
+            ..style.clone()
+        };
+        let m = metrics(&scaled, self.frame);
+        let wrapped = wrap_text(&text, max_units(width, m.size as u32, &text), lines);
         let (an, x, y) = placement(style, self.frame);
         let length_ms = ((end - start) * 1000.0).round() as u32;
         let anim = animation_tags(style, enter, true, length_ms, x, y, self.frame.1 as f64);
         let body = text_body(style, &wrapped, enter);
-        let mut fill = color
-            .map(|c| format!("\\1c{}", inline_color(c)))
-            .unwrap_or_default();
+        let mut fill = String::new();
+        if fit < 1.0 {
+            let border = if style.background.is_some() {
+                (m.size * 0.22).round()
+            } else {
+                m.outline
+            };
+            let _ = write!(fill, "\\fs{}\\bord{border}", m.size);
+        }
+        if let Some(c) = color {
+            let _ = write!(fill, "\\1c{}", inline_color(c));
+        }
         if style.blur > 0.0 {
             fill.push_str(&format!("\\blur{:.1}", style.blur * m.size));
         }
         if let Some(outer) = &style.outer_outline {
             let _ = writeln!(
                 self.events,
-                "Dialogue: 0,{},{},{name},,0,0,0,,{{\\an{an}{anim}\\1c{c}\\3c{c}\\bord{b}\\shad0}}{body}",
+                "Dialogue: 0,{},{},{name},,0,0,0,,{{\\an{an}{anim}\\fs{fs}\\1c{c}\\3c{c}\\bord{b}\\shad0}}{body}",
                 ass_time(start),
                 ass_time(end),
+                fs = m.size,
                 c = inline_color(outer),
                 b = m.outline + m.outer,
             );
@@ -248,7 +262,21 @@ impl Writer {
             ass_time(end),
         );
     }
+}
 
+/// Largest font scale (down to 0.6) at which `text` wraps into `lines`
+/// lines of `width` px without being cut off.
+fn fit_scale(text: &str, width: f64, size: f64, lines: usize) -> f64 {
+    let mut fit = 1.0;
+    while fit > 0.6
+        && wrap_text(text, max_units(width, (size * fit) as u32, text), lines).ends_with('…')
+    {
+        fit -= 0.05;
+    }
+    fit
+}
+
+impl Writer {
     /// Word-by-word caption chunk: one event per spoken word, the active word
     /// in the highlight colour. Only colour changes (no per-word scaling, which
     /// would make neighbouring words jump).
@@ -653,6 +681,17 @@ mod tests {
         let second = segment_script(&plan, &style, (2.0, 5.0), (1080, 1920));
         assert!(first.contains("\\fscx0"), "pop on entry");
         assert!(!second.contains("\\fscx0"), "no replay after the cut");
+    }
+
+    #[test]
+    fn long_titles_shrink_instead_of_truncating() {
+        let style = shorts();
+        let mut plan = EditPlan::new("a.mp4", "a", "local");
+        plan.telops = vec![line(0.0, 2.0, "And so, my fellow Americans ask not what")];
+        let ass = segment_script(&plan, &style, (0.0, 3.0), (1080, 1920));
+        assert!(!ass.contains('…'), "{ass}");
+        assert!(ass.contains("\\fs"), "{ass}");
+        assert_eq!(fit_scale("短い", 900.0, 90.0, 2), 1.0);
     }
 
     #[test]

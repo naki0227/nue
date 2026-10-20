@@ -323,7 +323,7 @@ pub fn shorts() -> Style {
             ..TransitionRules::default()
         },
         captions: TextStyle {
-            size: 0.082,
+            size: 0.095,
             highlight: "#FFE600".to_string(),
             outline_width: 0.14,
             position: 0.80,
@@ -333,7 +333,7 @@ pub fn shorts() -> Style {
             exit: Animation::None,
             mode: CaptionMode::Words,
             chunk_units: 18,
-            ..text("Rounded Mplus 1c ExtraBold", 0.082)
+            ..text("Rounded Mplus 1c ExtraBold", 0.095)
         },
         telops: TextStyle {
             color: "#FFE600".to_string(),
@@ -502,7 +502,7 @@ pub fn variety() -> Style {
             enter: Animation::Pop,
             enter_ms: 180,
             exit: Animation::None,
-            ..text("Rounded Mplus 1c Black", 0.064)
+            ..text("Rounded Mplus 1c Black", 0.08)
         },
         telops: TextStyle {
             color: "#FFF000".to_string(),
